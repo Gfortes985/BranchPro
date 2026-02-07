@@ -1,0 +1,266 @@
+import { useMemo } from "react";
+import { nanoid } from "nanoid";
+import { useEditorStore } from "../store/editorStore";
+import type { NodeData, Answer, MediaRef } from "../types";
+
+export default function Inspector() {
+  const nodes = useEditorStore((s) => s.nodes);
+  const selected = useEditorStore((s) => s.selectedNodeIds);
+  const patchNode = useEditorStore((s) => s.patchNode);
+  const requestDelete = useEditorStore((s) => s.requestDelete);
+
+  const node = useMemo(() => {
+    if (selected.length !== 1) return null;
+    return nodes.find((n) => n.id === selected[0]) ?? null;
+  }, [nodes, selected]);
+
+  const data = node?.data as NodeData | undefined;
+
+  if (!node || !data) {
+    return (
+      <div style={{ padding: 14, color: "#cfcfcf", opacity: 0.85 }}>
+        <div style={{ fontWeight: 900 }}>Inspector</div>
+        <div style={{ marginTop: 10 }}>Выдели 1 ноду, чтобы редактировать ✍️</div>
+      </div>
+    );
+  }
+
+  // общие поля для вложений (для обоих типов)
+  const mediaList = (((data as any).mediaList ?? []) as MediaRef[]) ?? [];
+  const mediaIndex = Math.max(0, Math.min(((data as any).mediaIndex ?? 0) as number, Math.max(0, mediaList.length - 1)));
+  const current = mediaList[mediaIndex] ?? null;
+
+  const setMedia = (list: MediaRef[], idx: number) => {
+    patchNode(node.id, { mediaList: list, mediaIndex: idx } as any);
+  };
+
+  const addMedia = async (type: "image" | "video") => {
+    const p = await window.branchpro.pickMedia();
+    if (!p) return;
+    const next = [...mediaList, { type, path: p }];
+    setMedia(next, next.length - 1);
+  };
+
+  const deleteCurrentMedia = () => {
+    if (!mediaList.length) return;
+    const next = mediaList.filter((_, i) => i !== mediaIndex);
+    const nextIdx = Math.max(0, Math.min(mediaIndex, Math.max(0, next.length - 1)));
+    setMedia(next, nextIdx);
+  };
+
+  return (
+    <div style={{ padding: 14, color: "#fff" }}>
+      <div style={{ fontWeight: 900, fontSize: 14 }}>Inspector</div>
+
+      {/* QUESTION */}
+      {(data as any).kind === "question" ? (
+        <QuestionEditor
+          nodeId={node.id}
+          data={data as any}
+          patchNode={patchNode}
+        />
+      ) : null}
+
+      {/* ENDING */}
+      {(data as any).kind === "ending" ? (
+        <EndingEditor
+          nodeId={node.id}
+          data={data as any}
+          patchNode={patchNode}
+        />
+      ) : null}
+
+      {/* Вложения (общие) */}
+      <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
+        <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Вложения</div>
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <button style={btn} onClick={() => addMedia("image")}>🖼️ Добавить</button>
+          <button style={btn} onClick={() => addMedia("video")}>🎬 Добавить</button>
+          <button
+            style={{ ...btn, opacity: mediaList.length ? 1 : 0.45, cursor: mediaList.length ? "pointer" : "not-allowed" }}
+            disabled={!mediaList.length}
+            onClick={deleteCurrentMedia}
+            title={mediaList.length ? "Удалить текущее вложение" : "Вложений нет"}
+          >
+            ✖ Удалить
+          </button>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
+          {mediaList.length ? (
+            <>
+              Вложение {mediaIndex + 1}/{mediaList.length}: {current?.type} — {basename(current?.path)}
+              <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ opacity: 0.7 }}>Перейти:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={mediaList.length}
+                  value={mediaIndex + 1}
+                  onChange={(e) => {
+                    const v = Number(e.target.value || 1);
+                    const idx = Math.max(0, Math.min(v - 1, mediaList.length - 1));
+                    setMedia(mediaList, idx);
+                  }}
+                  style={{ ...inp, width: 90, marginTop: 0, padding: "6px 8px" }}
+                />
+              </div>
+            </>
+          ) : (
+            "Вложений нет"
+          )}
+        </div>
+      </div>
+
+      {/* Опасные действия */}
+      <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
+        <button style={btnDanger} onClick={requestDelete}>🗑️ Удалить ноду (Del)</button>
+      </div>
+    </div>
+  );
+}
+
+function QuestionEditor(props: { nodeId: string; data: any; patchNode: any }) {
+  const { nodeId, data, patchNode } = props;
+  const title = data.title ?? "";
+  const answers: Answer[] = (data.answers ?? []) as Answer[];
+
+  const setAnswers = (next: Answer[]) => patchNode(nodeId, { answers: next } as any);
+
+  return (
+    <>
+      <label style={lbl}>Заголовок</label>
+      <input value={title} onChange={(e) => patchNode(nodeId, { title: e.target.value } as any)} style={inp} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+        <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Ответы</div>
+        <button
+          style={btnSmall}
+          onClick={() => setAnswers([...answers, { id: nanoid(), text: "Новый ответ" }])}
+        >
+          ➕ Добавить
+        </button>
+      </div>
+
+      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+        {answers.length === 0 ? (
+          <div style={{ fontSize: 12, opacity: 0.6 }}>Нет ответов</div>
+        ) : (
+          answers.map((a, idx) => (
+            <div
+              key={a.id}
+              style={{
+                border: "1px solid #2a2a2a",
+                borderRadius: 10,
+                background: "#111",
+                padding: 10
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>#{idx + 1}</div>
+                <button
+                  style={btnDangerSmall}
+                  onClick={() => setAnswers(answers.filter((x) => x.id !== a.id))}
+                >
+                  Удалить
+                </button>
+              </div>
+
+              <input
+                value={a.text}
+                onChange={(e) => setAnswers(answers.map((x) => (x.id === a.id ? { ...x, text: e.target.value } : x)))}
+                style={{ ...inp, marginTop: 8 }}
+                placeholder="Текст ответа..."
+              />
+
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.6 }}>
+                Порт: <span style={{ opacity: 0.9 }}>ans:{a.id}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+function EndingEditor(props: { nodeId: string; data: any; patchNode: any }) {
+  const { nodeId, data, patchNode } = props;
+  const title = data.title ?? "";
+  const resultText = data.resultText ?? "";
+
+  return (
+    <>
+      <label style={lbl}>Заголовок</label>
+      <input value={title} onChange={(e) => patchNode(nodeId, { title: e.target.value } as any)} style={inp} />
+
+      <label style={lbl}>Решение / итог</label>
+      <textarea
+        value={resultText}
+        onChange={(e) => patchNode(nodeId, { resultText: e.target.value } as any)}
+        style={{ ...inp, minHeight: 120, resize: "vertical" }}
+        placeholder="Напиши текст концовки..."
+      />
+    </>
+  );
+}
+
+function basename(p?: string | null) {
+  if (!p) return "";
+  return String(p).split(/[\\/]/).pop() ?? p;
+}
+
+const lbl: React.CSSProperties = { display: "block", marginTop: 12, fontSize: 12, opacity: 0.8 };
+
+const inp: React.CSSProperties = {
+  width: "100%",
+  marginTop: 6,
+  padding: "10px 10px",
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#111",
+  color: "#fff"
+};
+
+const btn: React.CSSProperties = {
+  flex: 1,
+  padding: "10px 10px",
+  borderRadius: 12,
+  border: "1px solid #2a2a2a",
+  background: "#151515",
+  color: "#fff",
+  cursor: "pointer"
+};
+
+const btnSmall: React.CSSProperties = {
+  marginLeft: "auto",
+  padding: "6px 10px",
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#151515",
+  color: "#fff",
+  cursor: "pointer",
+  fontSize: 12
+};
+
+const btnDanger: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 10px",
+  borderRadius: 12,
+  border: "1px solid #3a1b1b",
+  background: "#2a0f0f",
+  color: "#fff",
+  cursor: "pointer"
+};
+
+const btnDangerSmall: React.CSSProperties = {
+  marginLeft: "auto",
+  padding: "6px 10px",
+  borderRadius: 10,
+  border: "1px solid #3a1b1b",
+  background: "#2a0f0f",
+  color: "#fff",
+  cursor: "pointer",
+  fontSize: 12
+};
