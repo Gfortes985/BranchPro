@@ -211,7 +211,10 @@ export default function App() {
             onToggle={() => setMiniOpen((v) => !v)}
             nodes={nodes}
             edges={edges}
+            flowRef={rfRef}
+            wrapperRef={wrapperRef}
           />
+
 
           {/* ✅ selection rectangle */}
           {box
@@ -294,12 +297,42 @@ function BranchMiniMap(props: {
   onToggle: () => void;
   nodes: any[];
   edges: any[];
+  flowRef: React.MutableRefObject<any>;
+  wrapperRef: React.MutableRefObject<HTMLDivElement | null>;
 }) {
   const W = 240;
   const H = 160;
   const PAD = 14;
 
-  const { nodeRects, edgeLines } = useMemo(() => {
+  // viewport state (камера)
+  const [vp, setVp] = useState<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
+  const [wrapSize, setWrapSize] = useState<{ w: number; h: number }>({ w: 1, h: 1 });
+
+  // ✅ обновляем камеру и размер wrapper-а (через rAF)
+  useEffect(() => {
+    let raf = 0;
+
+    const tick = () => {
+      const inst = props.flowRef.current;
+      if (inst?.getViewport) {
+        const v = inst.getViewport();
+        setVp((cur) => (cur.x === v.x && cur.y === v.y && cur.zoom === v.zoom ? cur : v));
+      }
+
+      const el = props.wrapperRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setWrapSize((cur) => (cur.w === r.width && cur.h === r.height ? cur : { w: r.width, h: r.height }));
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [props.flowRef, props.wrapperRef]);
+
+  const model = useMemo(() => {
     const ns = props.nodes ?? [];
     const es = props.edges ?? [];
 
@@ -310,9 +343,23 @@ function BranchMiniMap(props: {
       return { id: n.id, x: pos.x, y: pos.y, w, h, data: n.data, selected: !!n.selected };
     });
 
-    if (items.length === 0) return { nodeRects: [], edgeLines: [] };
+    // если нод нет — всё пусто
+    if (items.length === 0) {
+      return {
+        nodeRects: [] as any[],
+        edgeLines: [] as any[],
+        minX: 0,
+        minY: 0,
+        scale: 1
+      };
+    }
 
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    // bounds графа
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+
     for (const it of items) {
       minX = Math.min(minX, it.x);
       minY = Math.min(minY, it.y);
@@ -320,7 +367,7 @@ function BranchMiniMap(props: {
       maxY = Math.max(maxY, it.y + it.h);
     }
 
-    const extra = 80;
+    const extra = 120;
     minX -= extra;
     minY -= extra;
     maxX += extra;
@@ -335,6 +382,7 @@ function BranchMiniMap(props: {
       y: PAD + (p.y - minY) * scale
     });
 
+    // прямоугольники нод
     const rects = items.map((it) => {
       const p = mapPoint({ x: it.x, y: it.y });
       return {
@@ -348,11 +396,13 @@ function BranchMiniMap(props: {
       };
     });
 
+    // центры нод для линий
     const centerById = new Map<string, { x: number; y: number }>();
     for (const it of items) {
       centerById.set(it.id, mapPoint({ x: it.x + it.w / 2, y: it.y + it.h / 2 }));
     }
 
+    // линии рёбер
     const lines = es
       .map((e: any) => {
         const a = centerById.get(e.source);
@@ -362,19 +412,61 @@ function BranchMiniMap(props: {
       })
       .filter(Boolean) as { id: string; x1: number; y1: number; x2: number; y2: number }[];
 
-    return { nodeRects: rects, edgeLines: lines };
+    return { nodeRects: rects, edgeLines: lines, minX, minY, scale };
   }, [props.nodes, props.edges]);
 
   const kindFill = (kind: string) => {
-    if (kind === "ending") return "rgba(74, 222, 128, 0.26)"; // зелёный
-    if (kind === "system") return "rgba(250, 204, 21, 0.26)"; // жёлтый
-    return "rgba(125, 211, 252, 0.22)"; // question
+    if (kind === "ending") return "rgba(74, 222, 128, 0.26)";
+    return "rgba(125, 211, 252, 0.22)";
   };
-
   const kindStroke = (kind: string) => {
     if (kind === "ending") return "rgba(74, 222, 128, 0.55)";
-    if (kind === "system") return "rgba(250, 204, 21, 0.55)";
     return "rgba(125, 211, 252, 0.55)";
+  };
+
+  // ✅ рамка текущей камеры (в world coords)
+  const cameraRect = useMemo(() => {
+    const { x, y, zoom } = vp;
+    const vw = wrapSize.w;
+    const vh = wrapSize.h;
+
+    // world = (screen - x) / zoom
+    const left = (0 - x) / zoom;
+    const top = (0 - y) / zoom;
+    const right = (vw - x) / zoom;
+    const bottom = (vh - y) / zoom;
+
+    // map world -> minimap
+    const mx = PAD + (left - model.minX) * model.scale;
+    const my = PAD + (top - model.minY) * model.scale;
+    const mw = (right - left) * model.scale;
+    const mh = (bottom - top) * model.scale;
+
+    return { x: mx, y: my, w: mw, h: mh };
+  }, [vp, wrapSize, model.minX, model.minY, model.scale]);
+
+  // ✅ клик по миникарте -> центрируем камеру
+  const onMiniClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const inst = props.flowRef.current;
+    const wrap = props.wrapperRef.current;
+    if (!inst?.setViewport || !inst?.getViewport || !wrap) return;
+
+    const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    // mini -> world
+    const worldX = (mx - PAD) / model.scale + model.minX;
+    const worldY = (my - PAD) / model.scale + model.minY;
+
+    const { zoom } = inst.getViewport();
+    const wr = wrap.getBoundingClientRect();
+
+    // хотим, чтобы worldX/worldY оказался в центре экрана
+    const nextX = -worldX * zoom + wr.width / 2;
+    const nextY = -worldY * zoom + wr.height / 2;
+
+    inst.setViewport({ x: nextX, y: nextY, zoom }, { duration: 220 });
   };
 
   const panelStyle: React.CSSProperties = {
@@ -430,16 +522,15 @@ function BranchMiniMap(props: {
       <div style={headerStyle}>
         <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.92 }}>MiniMap</div>
         {props.open ? <div style={badge}>{props.nodes.length} nodes</div> : null}
-
         <button style={toggleBtn} onClick={props.onToggle}>
           {props.open ? "Свернуть" : "Развернуть"}
         </button>
       </div>
 
       {props.open ? (
-        <svg width={W} height={H} style={{ display: "block" }}>
+        <svg width={W} height={H} style={{ display: "block", cursor: "pointer" }} onClick={onMiniClick}>
           {/* edges */}
-          {edgeLines.map((l) => (
+          {model.edgeLines.map((l) => (
             <line
               key={l.id}
               x1={l.x1}
@@ -452,7 +543,7 @@ function BranchMiniMap(props: {
           ))}
 
           {/* nodes */}
-          {nodeRects.map((r) => (
+          {model.nodeRects.map((r: any) => (
             <rect
               key={r.id}
               x={r.x}
@@ -466,6 +557,21 @@ function BranchMiniMap(props: {
               strokeWidth={1}
             />
           ))}
+
+          {/* ✅ camera rectangle */}
+          <rect
+            x={cameraRect.x}
+            y={cameraRect.y}
+            width={cameraRect.w}
+            height={cameraRect.h}
+            rx={6}
+            ry={6}
+            fill="rgba(255,255,255,0.04)"
+            stroke="rgba(255,255,255,0.55)"
+            strokeWidth={1.2}
+            strokeDasharray="6 4"
+            pointerEvents="none"
+          />
         </svg>
       ) : null}
     </div>
