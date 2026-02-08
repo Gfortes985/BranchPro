@@ -6,6 +6,9 @@ const os = require("os");
 const { Menu } = require("electron");
 
 
+let pendingOpenFile = null;
+
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "branchpro",
@@ -51,8 +54,12 @@ function extractBranchproArg(argv) {
 }
 
 function sendOpenToWindow(win, filePath) {
-  if (!win) return;
-  // ждём пока renderer готов
+  if (!win || !filePath) return;
+
+  // ✅ если renderer ещё не готов — запомним
+  pendingOpenFile = filePath;
+
+  // и всё равно попробуем отправить после загрузки
   if (win.webContents.isLoading()) {
     win.webContents.once("did-finish-load", () => {
       win.webContents.send("open-file", filePath);
@@ -61,6 +68,7 @@ function sendOpenToWindow(win, filePath) {
     win.webContents.send("open-file", filePath);
   }
 }
+
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -372,28 +380,50 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
 });
 
 ipcMain.handle("project:openBundleAtPath", async (_e, filePath) => {
-  // тут reuse твоей логики openBundle, но без dialog.showOpenDialog
-  // filePath — это путь к .branchpro
+  console.log("[main] openBundleAtPath:", filePath);
 
   const zipBuf = await fs.readFile(filePath);
   const zip = await JSZip.loadAsync(zipBuf);
 
-  const projectText = await zip.file("project.json").async("string");
+  // ✅ project.json
+  const projEntry = zip.file("project.json");
+  if (!projEntry) {
+    const names = Object.keys(zip.files);
+    console.log("[main] zip entries:", names);
+    throw new Error(
+      "В архиве нет project.json. Файлы внутри: " + names.join(", ")
+    );
+  }
+
+  const projectText = await projEntry.async("string");
   const project = JSON.parse(projectText);
 
+  // tempRoot/media/...
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "branchpro-"));
   mediaRoot = tempRoot;
 
+  // ✅ распаковка media/*
   for (const name of Object.keys(zip.files)) {
+    const entry = zip.files[name];
+
+    // папки пропускаем
+    if (entry.dir) continue;
+
     if (!name.startsWith("media/")) continue;
-    const buf = await zip.file(name).async("nodebuffer");
+
+    const file = zip.file(name);
+    if (!file) continue;
+
+    const buf = await file.async("nodebuffer");
     const outPath = path.join(tempRoot, name);
+
     await fs.mkdir(path.dirname(outPath), { recursive: true });
     await fs.writeFile(outPath, buf);
   }
 
   return { ok: true, project, mediaRoot: tempRoot, path: filePath };
 });
+
 
 ipcMain.on("project:dirty", (e, dirty) => {
   dirtyByWC.set(e.sender.id, !!dirty);
@@ -405,4 +435,10 @@ ipcMain.on("project:saveResult", (_e, payload) => {
   if (!p) return;
   pendingSave.delete(token);
   p.resolve({ ok: !!ok, path: path ?? null });
+});
+
+ipcMain.handle("project:getPendingOpenFile", async () => {
+  const p = pendingOpenFile;
+  pendingOpenFile = null;
+  return p; // string | null
 });

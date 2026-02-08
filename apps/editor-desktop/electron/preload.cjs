@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("branchpro", {
   setDirty: (dirty) => ipcRenderer.send("project:dirty", !!dirty),
   reportSaveResult: (token, ok, path) =>
   ipcRenderer.send("project:saveResult", { token, ok: !!ok, path: path ?? null }),
+  getPendingOpenFile: () => ipcRenderer.invoke("project:getPendingOpenFile"),
+
 
 
 });

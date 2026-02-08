@@ -219,7 +219,8 @@ export default function App() {
 }, [loadFromFile, saveToFile, saveAsToFile, currentFilePath]);
 
   useEffect(() => {
-  const off = window.branchpro.onOpenFile?.(async (filePath: string) => {
+  const openByPath = async (filePath: string) => {
+    console.log("[openByPath] file =", filePath);
     const res = await window.branchpro.openBundleAtPath(filePath);
     if (!res?.ok) return;
 
@@ -228,10 +229,22 @@ export default function App() {
 
     const { nodes: n, edges: e } = fromProject(res.project);
     replaceAll(n, e);
+  };
+
+  // 1) подписка на событие
+  const off = window.branchpro.onOpenFile?.((filePath: string) => {
+    openByPath(filePath);
   });
+
+  // 2) страховка: если событие пришло слишком рано — забираем pending
+  (async () => {
+    const pending = await window.branchpro.getPendingOpenFile?.();
+    if (pending) await openByPath(pending);
+  })();
 
   return () => { if (typeof off === "function") off(); };
 }, [replaceAll, setCurrentFilePath]);
+
 
   // selection box helpers
   const pickRect = (a: number, b: number, c: number, d: number) => ({
