@@ -5,7 +5,8 @@
   "scripts": {
     "dev:editor": "pnpm -C apps/editor-desktop dev",
     "install:editor": "pnpm -C apps/editor-desktop install",
-    "approve": "pnpm approve-builds"
+    "approve": "pnpm approve-builds",
+    "dist": "npm build && electron-builder"
   },
   "devDependencies": {
     "turbo": "^2.8.3"

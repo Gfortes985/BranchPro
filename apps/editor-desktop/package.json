@@ -1,11 +1,16 @@
 {
   "name": "branchpro-editor-desktop",
   "private": true,
+  "version": "1.0.0",
+  "description": "BranchPro editor",
+  "author": "Gfortes",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"pnpm:electron:dev\"",
+    "dev": "concurrently -k \"vite\" \"npm run electron:dev\"",
     "build": "vite build",
-    "electron:dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main.cjs"
+    "electron:dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main.cjs",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "immer": "^10.1.1",
@@ -22,9 +27,42 @@
     "@vitejs/plugin-react": "^5.1.3",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
+    "electron": "^40.2.1",
     "electron-builder": "^26.7.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
     "vite": "^5.4.2"
+  },
+  "build": {
+    "appId": "gfortes.branchpro.editor",
+    "productName": "BranchPro",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,                
+      "allowToChangeInstallationDirectory": true, 
+      "perMachine": false,             
+      "createDesktopShortcut": true,    
+      "createStartMenuShortcut": true,  
+      "shortcutName": "BranchPro",      
+      "runAfterFinish": true            
+    }
   }
 }
