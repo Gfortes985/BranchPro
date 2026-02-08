@@ -192,16 +192,47 @@ export default function App() {
   }, [undo, redo, requestDelete, addQuestion, saveToFile]);
 
   useEffect(() => {
-  const off = window.branchpro.onMenuAction?.((action: string) => {
-    if (action === "open") loadFromFile();
-    if (action === "save") saveToFile();
-    if (action === "saveAs") saveAsToFile();
+  const off = window.branchpro.onMenuAction?.(async (action: string, token?: string) => {
+    try {
+      if (action === "open") {
+        await loadFromFile();
+        return;
+      }
+
+      if (action === "save") {
+        await saveToFile();
+        if (token) window.branchpro.reportSaveResult(token, true, currentFilePath ?? null);
+        return;
+      }
+
+      if (action === "saveAs") {
+        await saveAsToFile();
+        if (token) window.branchpro.reportSaveResult(token, true, currentFilePath ?? null);
+        return;
+      }
+    } catch (e) {
+      if (token) window.branchpro.reportSaveResult(token, false, null);
+    }
   });
 
-  return () => {
-    if (typeof off === "function") off();
-  };
-}, [loadFromFile, saveToFile, saveAsToFile]);
+  return () => { if (typeof off === "function") off(); };
+}, [loadFromFile, saveToFile, saveAsToFile, currentFilePath]);
+
+  useEffect(() => {
+  const off = window.branchpro.onOpenFile?.(async (filePath: string) => {
+    const res = await window.branchpro.openBundleAtPath(filePath);
+    if (!res?.ok) return;
+
+    await window.branchpro.setMediaRoot(res.mediaRoot);
+    setCurrentFilePath(res.path);
+
+    const { nodes: n, edges: e } = fromProject(res.project);
+    replaceAll(n, e);
+  });
+
+  return () => { if (typeof off === "function") off(); };
+}, [replaceAll, setCurrentFilePath]);
+
   // selection box helpers
   const pickRect = (a: number, b: number, c: number, d: number) => ({
     left: Math.min(a, c),

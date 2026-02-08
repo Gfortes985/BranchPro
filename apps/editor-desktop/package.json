@@ -39,6 +39,14 @@
     "directories": {
       "output": "release"
     },
+    "fileAssociations": [
+    {
+      "ext": "branchpro",
+      "name": "BranchPro Project",
+      "role": "Editor",
+      "icon": "build/branchpro.ico"
+    }
+    ],
     "files": [
       "dist/**",
       "electron/**",

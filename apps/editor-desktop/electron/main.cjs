@@ -22,6 +22,45 @@ protocol.registerSchemesAsPrivileged([
 
 let win = null;
 let mediaRoot = null;
+let windows = [];
+
+const dirtyByWC = new Map();          // webContents.id -> boolean
+const pendingSave = new Map();        // token -> { resolve }
+
+
+function isDirty(win) {
+  if (!win) return false;
+  return !!dirtyByWC.get(win.webContents.id);
+}
+
+function requestSaveFromWindow(win) {
+  return new Promise((resolve) => {
+    const token = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    pendingSave.set(token, { resolve });
+    // шлём команду "save" вместе с token
+    win.webContents.send("menu:action", "save", token);
+  });
+}
+
+
+function extractBranchproArg(argv) {
+  const p = (argv || []).find(
+    (a) => typeof a === "string" && a.toLowerCase().endsWith(".branchpro")
+  );
+  return p || null;
+}
+
+function sendOpenToWindow(win, filePath) {
+  if (!win) return;
+  // ждём пока renderer готов
+  if (win.webContents.isLoading()) {
+    win.webContents.once("did-finish-load", () => {
+      win.webContents.send("open-file", filePath);
+    });
+  } else {
+    win.webContents.send("open-file", filePath);
+  }
+}
 
 async function createWindow() {
   win = new BrowserWindow({
@@ -42,6 +81,73 @@ async function createWindow() {
     win.webContents.openDevTools({ mode: "detach" });
   } else {
     await win.loadFile(path.join(__dirname, "../dist/index.html"));
+  }
+
+  windows.push(win);
+
+  win.on("closed", () => {
+    windows = windows.filter((w) => w !== win);
+  });
+}
+
+async function handleOpenBranchProFile(filePath) {
+  // выбираем “текущее” окно — фокусное, либо первое
+  const focused = BrowserWindow.getFocusedWindow();
+  const currentWin = focused || windows[0];
+
+  // если окон нет — создадим
+  if (!currentWin) {
+    const win = createWindow();
+    sendOpenToWindow(win, filePath);
+    return;
+  }
+
+  // ✅ если приложение уже запущено — показываем диалог выбора
+  const res = await dialog.showMessageBox(currentWin, {
+    type: "question",
+    title: "Открыть проект BranchPro",
+    message: "Как открыть этот проект?",
+    detail: path.basename(filePath),
+    buttons: ["Открыть в текущем окне", "Открыть в новом окне", "Отмена"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true
+  });
+
+  if (res.response === 2) return; // cancel
+
+  if (res.response === 0) {
+  // ✅ открыть в текущем
+  // если грязный — спросим про сохранение
+  if (isDirty(currentWin)) {
+    const ask = await dialog.showMessageBox(currentWin, {
+      type: "warning",
+      title: "BranchPro",
+      message: "Сохранить изменения текущего проекта?",
+      buttons: ["Да", "Нет", "Отмена"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    });
+
+    if (ask.response === 2) return; // Отмена
+
+    if (ask.response === 0) {
+      // Да -> сохраняем
+      const saveRes = await requestSaveFromWindow(currentWin);
+
+      // если пользователь отменил SaveAs или сохранение упало
+      if (!saveRes?.ok) return;
+    }
+    // Нет -> просто продолжаем
+  }
+
+  sendOpenToWindow(currentWin, filePath);
+}
+ else if (res.response === 1) {
+    // новое окно
+    const win = createWindow();
+    sendOpenToWindow(win, filePath);
   }
 }
 
@@ -68,6 +174,33 @@ function buildMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  // ✅ если уже запущено и пользователь кликнул файл → сюда прилетает argv
+  app.on("second-instance", async (_event, argv) => {
+    const filePath = extractBranchproArg(argv);
+    if (filePath) await handleOpenBranchProFile(filePath);
+
+    const focused = BrowserWindow.getFocusedWindow() || windows[0];
+    if (focused) {
+      if (focused.isMinimized()) focused.restore();
+      focused.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    const win = createWindow();
+
+    // ✅ если запустили приложение двойным кликом по файлу (первый старт)
+    const filePath = extractBranchproArg(process.argv);
+    if (filePath) {
+      // при первом старте — без диалога (обычно так удобнее)
+      sendOpenToWindow(win, filePath);
+    }
+  });
+}
 
 app.whenReady().then(() => {
   protocol.registerFileProtocol("branchpro", (request, callback) => {
@@ -237,3 +370,38 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
   return { ok: true, path: filePath };
 });
 
+ipcMain.handle("project:openBundleAtPath", async (_e, filePath) => {
+  // тут reuse твоей логики openBundle, но без dialog.showOpenDialog
+  // filePath — это путь к .branchpro
+
+  const zipBuf = await fs.readFile(filePath);
+  const zip = await JSZip.loadAsync(zipBuf);
+
+  const projectText = await zip.file("project.json").async("string");
+  const project = JSON.parse(projectText);
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "branchpro-"));
+  mediaRoot = tempRoot;
+
+  for (const name of Object.keys(zip.files)) {
+    if (!name.startsWith("media/")) continue;
+    const buf = await zip.file(name).async("nodebuffer");
+    const outPath = path.join(tempRoot, name);
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(outPath, buf);
+  }
+
+  return { ok: true, project, mediaRoot: tempRoot, path: filePath };
+});
+
+ipcMain.on("project:dirty", (e, dirty) => {
+  dirtyByWC.set(e.sender.id, !!dirty);
+});
+
+ipcMain.on("project:saveResult", (_e, payload) => {
+  const { token, ok, path } = payload || {};
+  const p = pendingSave.get(token);
+  if (!p) return;
+  pendingSave.delete(token);
+  p.resolve({ ok: !!ok, path: path ?? null });
+});

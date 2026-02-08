@@ -81,7 +81,9 @@ export const useEditorStore = create<S>()(
       set((s) => {
         s.edges = s.edges.filter((e) => !edgeIds.has(e.id));
         s.selectedEdgeIds = [];
-        s.isDirty = true; // если есть dirty
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+ // если есть dirty
       });
     },
 
@@ -102,10 +104,14 @@ export const useEditorStore = create<S>()(
 
     markDirty() {
       set({ isDirty: true });
+      (window as any).branchpro?.setDirty?.(true);
     },
+
     markSaved() {
-      set({ isDirty: false, lastSavedAt: Date.now() });
+      set({ isDirty: false });
+      (window as any).branchpro?.setDirty?.(false);
     },
+
 
 
     nodes: [],
@@ -201,6 +207,8 @@ export const useEditorStore = create<S>()(
           } as any
         });
         s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+
         s.selectedNodeIds = [id];
       });
     },
@@ -223,6 +231,8 @@ export const useEditorStore = create<S>()(
           } as any
         });
         s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+
         s.selectedNodeIds = [id];
       });
     },
@@ -256,6 +266,7 @@ export const useEditorStore = create<S>()(
         s.confirmDeleteOpen = false;
         s.confirmDeleteCount = 0;
         s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
       });
     },
 
@@ -270,6 +281,8 @@ export const useEditorStore = create<S>()(
         if (!n) return;
         n.data = { ...(n.data as any), ...(patch as any) };
         s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+
       });
     },
     resetHistory() {
