@@ -23,6 +23,9 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
     <div
       style={{
         width: 320,
+        maxWidth: 320,
+        overflow: "hidden", // ✅ защита от “разъезда” контента
+        boxSizing: "border-box",
         borderRadius: 14,
         border: selected ? "2px solid #7dd3fc" : "1px solid #2a2a2a",
         background: "#121212",
@@ -35,7 +38,19 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
       <Handle type="target" position={Position.Left} style={handleStyle} />
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>QUESTION</div>
-      <div style={{ fontSize: 16, fontWeight: 800, marginTop: 6 }}>{title}</div>
+
+      {/* заголовок тоже на всякий случай с переносами */}
+      <div
+        style={{
+          fontSize: 16,
+          fontWeight: 800,
+          marginTop: 6,
+          overflowWrap: "anywhere",
+          wordBreak: "break-word"
+        }}
+      >
+        {title}
+      </div>
 
       {/* ответы */}
       <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>Ответы</div>
@@ -52,11 +67,23 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
                 border: "1px solid #2a2a2a",
                 borderRadius: 10,
                 padding: "8px 10px",
-                background: "#111"
+                background: "#111",
+                maxWidth: "100%",
+                overflow: "visible" // ✅ не даём внутренностям растягивать блок
               }}
               title="Потяни за точку справа чтобы соединить"
             >
-              <div style={{ fontSize: 13, opacity: 0.92, paddingRight: 22 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  opacity: 0.92,
+                  paddingRight: 22,
+                  maxWidth: "100%",
+                  overflowWrap: "anywhere", // ✅ ломает длинные строки без пробелов
+                  wordBreak: "break-word",
+                  whiteSpace: "pre-wrap" // ✅ если будут переносы — покажет
+                }}
+              >
                 {a.text || "—"}
               </div>
 
@@ -76,7 +103,8 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
               border: "1px solid #2a2a2a",
               background: "#0f0f0f",
               borderRadius: 12,
-              overflow: "hidden"
+              overflow: "hidden",
+              maxWidth: "100%"
             }}
           >
             {current.type === "image" ? (
@@ -126,7 +154,18 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
             </div>
           </div>
 
-          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 12,
+              opacity: 0.75,
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap"
+            }}
+            title={current.path}
+          >
             📎 {current.type}: {basename(current.path)}
           </div>
         </div>

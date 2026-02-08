@@ -4,12 +4,18 @@ import { nanoid } from "nanoid";
 import type { Edge, Node } from "reactflow";
 import type { NodeData } from "../types";
 
-type Snapshot = { nodes: Node<NodeData>[]; edges: Edge[]; selectedNodeIds: string[] };
+type Snapshot = { 
+  nodes: Node<NodeData>[]; 
+  edges: Edge[]; 
+  selectedNodeIds: string[];
+  selectedEdgeIds: string[]
+};
 
 type S = {
   nodes: Node<NodeData>[];
   edges: Edge[];
   selectedNodeIds: string[];
+  selectedEdgeIds: string[];
 
   past: Snapshot[];
   future: Snapshot[];
@@ -17,13 +23,17 @@ type S = {
   confirmDeleteOpen: boolean;
   confirmDeleteCount: number;
 
+  currentFilePath: string | null;
+  setCurrentFilePath: (p: string | null) => void;
+
+
   pushHistory: () => void;
   undo: () => void;
   redo: () => void;
 
   setNodes: (nodes: Node<NodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
-  setSelection: (ids: string[]) => void;
+  setSelection: (nodeIds: string[], edgeIds: string[]) => void;
 
   addQuestion: () => void;
   addEnding: () => void;
@@ -33,21 +43,76 @@ type S = {
   cancelDelete: () => void;
 
   patchNode: (id: string, patch: Partial<NodeData>) => void;
+
+  resetHistory: () => void;
+  replaceAll: (nodes: Node<NodeData>[], edges: Edge[]) => void;
+
+  isDirty: boolean;
+  lastSavedAt: number | null;
+  markDirty: () => void;
+  markSaved: () => void;
+
+  isLoadingProject: boolean;
+  beginLoad: () => void;
+  endLoad: () => void;
+
+  deleteSelectedEdgesNow: () => void;
+
 };
 
-function snap(nodes: Node<NodeData>[], edges: Edge[], selectedNodeIds: string[]): Snapshot {
+function snap(nodes: Node<NodeData>[], edges: Edge[], selectedNodeIds: string[], selectedEdgeIds: string[]): Snapshot {
   return {
     nodes: structuredClone(nodes),
     edges: structuredClone(edges),
-    selectedNodeIds: structuredClone(selectedNodeIds)
+    selectedNodeIds: structuredClone(selectedNodeIds),
+    selectedEdgeIds: structuredClone(selectedEdgeIds)
   };
 }
 
+
+
 export const useEditorStore = create<S>()(
   immer((set, get) => ({
+    deleteSelectedEdgesNow() {
+      const edgeIds = new Set(get().selectedEdgeIds);
+      if (edgeIds.size === 0) return;
+
+      get().pushHistory();
+      set((s) => {
+        s.edges = s.edges.filter((e) => !edgeIds.has(e.id));
+        s.selectedEdgeIds = [];
+        s.isDirty = true; // если есть dirty
+      });
+    },
+
+
+
+    isLoadingProject: false,
+
+    beginLoad() {
+      set({ isLoadingProject: true });
+    },
+
+    endLoad() {
+      set({ isLoadingProject: false, isDirty: false, lastSavedAt: null });
+    },
+
+    isDirty: false,
+    lastSavedAt: null,
+
+    markDirty() {
+      set({ isDirty: true });
+    },
+    markSaved() {
+      set({ isDirty: false, lastSavedAt: Date.now() });
+    },
+
+
     nodes: [],
     edges: [],
     selectedNodeIds: [],
+    selectedEdgeIds: [],
+
 
     past: [],
     future: [],
@@ -55,38 +120,53 @@ export const useEditorStore = create<S>()(
     confirmDeleteOpen: false,
     confirmDeleteCount: 0,
 
-    pushHistory() {
-      const { nodes, edges, selectedNodeIds, past } = get();
-      set({ past: [...past, snap(nodes, edges, selectedNodeIds)], future: [] });
+    currentFilePath: null,
+    setCurrentFilePath(p) {
+      set({ currentFilePath: p });
     },
 
+
+    pushHistory() {
+      const { nodes, edges, selectedNodeIds, selectedEdgeIds, past } = get();
+      set({ past: [...past, snap(nodes, edges, selectedNodeIds, selectedEdgeIds)], future: [] });
+  },
+
+
     undo() {
-      const { past, future, nodes, edges, selectedNodeIds } = get();
+      const { past, future, nodes, edges, selectedNodeIds, selectedEdgeIds } = get();
       if (past.length === 0) return;
+
       const prev = past[past.length - 1]!;
-      const cur = snap(nodes, edges, selectedNodeIds);
+      const cur = snap(nodes, edges, selectedNodeIds, selectedEdgeIds);
+
       set({
         past: past.slice(0, -1),
         future: [cur, ...future],
         nodes: prev.nodes,
         edges: prev.edges,
-        selectedNodeIds: prev.selectedNodeIds
+        selectedNodeIds: prev.selectedNodeIds,
+        selectedEdgeIds: prev.selectedEdgeIds
       });
     },
 
+
     redo() {
-      const { past, future, nodes, edges, selectedNodeIds } = get();
+      const { past, future, nodes, edges, selectedNodeIds, selectedEdgeIds } = get();
       if (future.length === 0) return;
+
       const next = future[0]!;
-      const cur = snap(nodes, edges, selectedNodeIds);
+      const cur = snap(nodes, edges, selectedNodeIds, selectedEdgeIds);
+
       set({
         past: [...past, cur],
         future: future.slice(1),
         nodes: next.nodes,
         edges: next.edges,
-        selectedNodeIds: next.selectedNodeIds
+        selectedNodeIds: next.selectedNodeIds,
+        selectedEdgeIds: next.selectedEdgeIds
       });
     },
+
 
     setNodes(nodes) {
       set({ nodes });
@@ -94,9 +174,11 @@ export const useEditorStore = create<S>()(
     setEdges(edges) {
       set({ edges });
     },
-    setSelection(ids) {
-      set({ selectedNodeIds: ids });
+
+    setSelection(nodeIds, edgeIds) {
+      set({ selectedNodeIds: nodeIds, selectedEdgeIds: edgeIds });
     },
+
 
     addQuestion() {
       get().pushHistory();
@@ -118,7 +200,7 @@ export const useEditorStore = create<S>()(
             mediaIndex: 0
           } as any
         });
-
+        s.isDirty = true;
         s.selectedNodeIds = [id];
       });
     },
@@ -140,16 +222,27 @@ export const useEditorStore = create<S>()(
             mediaIndex: 0
           } as any
         });
-
+        s.isDirty = true;
         s.selectedNodeIds = [id];
       });
     },
 
     requestDelete() {
-      const n = get().selectedNodeIds.length;
-      if (n === 0) return;
-      set({ confirmDeleteOpen: true, confirmDeleteCount: n });
-    },
+      const nodeCount = get().selectedNodeIds.length;
+      const edgeCount = get().selectedEdgeIds.length;
+
+      if (nodeCount === 0 && edgeCount === 0) return;
+
+      // ✅ только линии — удаляем сразу, без подтверждения
+      if (nodeCount === 0 && edgeCount > 0) {
+        get().deleteSelectedEdgesNow();
+        return;
+      }
+
+      // ✅ есть ноды — подтверждение
+      set({ confirmDeleteOpen: true, confirmDeleteCount: nodeCount + edgeCount });
+  },
+
 
     confirmDelete() {
       const ids = new Set(get().selectedNodeIds);
@@ -162,6 +255,7 @@ export const useEditorStore = create<S>()(
         s.selectedNodeIds = [];
         s.confirmDeleteOpen = false;
         s.confirmDeleteCount = 0;
+        s.isDirty = true;
       });
     },
 
@@ -175,7 +269,27 @@ export const useEditorStore = create<S>()(
         const n = s.nodes.find((x) => x.id === id);
         if (!n) return;
         n.data = { ...(n.data as any), ...(patch as any) };
+        s.isDirty = true;
       });
-    }
+    },
+    resetHistory() {
+      set({ past: [], future: [] });
+    },
+
+    replaceAll(nodes, edges) {
+      set({
+        nodes,
+        edges,
+        selectedNodeIds: [],
+       confirmDeleteOpen: false,
+        confirmDeleteCount: 0,
+        past: [],
+        future: [],
+        isDirty: false,
+        lastSavedAt: null
+      });
+    },
+
+
   }))
 );
