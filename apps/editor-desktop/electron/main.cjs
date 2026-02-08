@@ -62,11 +62,10 @@ function sendOpenToWindow(win, filePath) {
   }
 }
 
-async function createWindow() {
-  win = new BrowserWindow({
+function createWindow() {
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
-
     backgroundColor: "#0b0b0b",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -77,18 +76,21 @@ async function createWindow() {
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
-    await win.loadURL(devUrl);
+    win.loadURL(devUrl);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    await win.loadFile(path.join(__dirname, "../dist/index.html"));
+    // ✅ в билде надёжнее так:
+    win.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
   }
 
   windows.push(win);
-
   win.on("closed", () => {
     windows = windows.filter((w) => w !== win);
   });
+
+  return win;
 }
+
 
 async function handleOpenBranchProFile(filePath) {
   // выбираем “текущее” окно — фокусное, либо первое
@@ -218,7 +220,6 @@ app.whenReady().then(() => {
     }
   });
   buildMenu();
-  createWindow(); 
 });
 
 app.on("window-all-closed", () => {
