@@ -58,6 +58,11 @@ type S = {
 
   deleteSelectedEdgesNow: () => void;
 
+
+  getSelectedNode: () => Node<NodeData> | null;
+  setEntryNode: (id: string | null) => void;
+
+
 };
 
 function snap(nodes: Node<NodeData>[], edges: Edge[], selectedNodeIds: string[], selectedEdgeIds: string[]): Snapshot {
@@ -86,8 +91,27 @@ export const useEditorStore = create<S>()(
  // если есть dirty
       });
     },
+    setEntryNode(id) {
+      get().pushHistory();
+      set((s) => {
+        for (const n of s.nodes) {
+          if (n.type === "questionNode") {
+            (n.data as any).isEntry = id ? n.id === id : false;
+          }
+        }
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+      });
+    },
+
+    getSelectedNode() {
+      const id = get().selectedNodeIds[0];
+      if (!id) return null;
+      return get().nodes.find((n) => n.id === id) ?? null;
+    },
 
 
+    
 
     isLoadingProject: false,
 
@@ -189,6 +213,10 @@ export const useEditorStore = create<S>()(
     addQuestion() {
       get().pushHistory();
       const id = nanoid();
+      const hasEntry = get().nodes.some(
+        (n) => n.type === "questionNode" && Boolean((n.data as any)?.isEntry)
+      );
+      const shouldBeEntry = !hasEntry;
 
       set((s) => {
         s.nodes.push({
@@ -198,6 +226,7 @@ export const useEditorStore = create<S>()(
           data: {
             kind: "question",
             title: "Вопрос",
+            isEntry: shouldBeEntry,
             answers: [
               { id: nanoid(), text: "Ответ 1" },
               { id: nanoid(), text: "Ответ 2" }
@@ -243,13 +272,11 @@ export const useEditorStore = create<S>()(
 
       if (nodeCount === 0 && edgeCount === 0) return;
 
-      // ✅ только линии — удаляем сразу, без подтверждения
       if (nodeCount === 0 && edgeCount > 0) {
         get().deleteSelectedEdgesNow();
         return;
       }
 
-      // ✅ есть ноды — подтверждение
       set({ confirmDeleteOpen: true, confirmDeleteCount: nodeCount + edgeCount });
   },
 

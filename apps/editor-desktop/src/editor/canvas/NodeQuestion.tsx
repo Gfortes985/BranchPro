@@ -12,6 +12,10 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
   const mediaIndexRaw = ((data as any).mediaIndex ?? 0) as number;
   const mediaIndex = clamp(mediaIndexRaw, 0, Math.max(0, mediaList.length - 1));
   const current = mediaList.length ? mediaList[mediaIndex] : null;
+  const isEntry = Boolean((data as any).isEntry);
+  const setEntryNode = useEditorStore((s) => (s as any).setEntryNode);
+
+
 
   const goto = (delta: number) => {
     if (mediaList.length <= 1) return;
@@ -27,17 +31,26 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
         overflow: "hidden", // ✅ защита от “разъезда” контента
         boxSizing: "border-box",
         borderRadius: 14,
-        border: selected ? "2px solid #7dd3fc" : "1px solid #2a2a2a",
+        border: isEntry ? "2px solid #FF5E00" : selected ? "2px solid #7dd3fc" : "1px solid #2a2a2a",
         background: "#121212",
         color: "#eaeaea",
         padding: 12,
-        boxShadow: "0 10px 30px rgba(0,0,0,0.35)"
+        boxShadow: "0 10px 30px rgba(0,0,0,0.35)"     
+
       }}
     >
       {/* вход */}
       <Handle type="target" position={Position.Left} style={handleStyle} />
 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
       <div style={{ fontSize: 12, opacity: 0.7 }}>QUESTION</div>
+      {isEntry ? (
+        <div style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)", color: "#22c55e" }}>
+        START
+      </div>
+      ) : null}
+      </div>
+
 
       {/* заголовок тоже на всякий случай с переносами */}
       <div

@@ -8,6 +8,8 @@ export default function Inspector() {
   const selected = useEditorStore((s) => s.selectedNodeIds);
   const patchNode = useEditorStore((s) => s.patchNode);
   const requestDelete = useEditorStore((s) => s.requestDelete);
+  const setEntryNode = useEditorStore((s) => (s as any).setEntryNode);
+
 
   const node = useMemo(() => {
     if (selected.length !== 1) return null;
@@ -58,7 +60,9 @@ export default function Inspector() {
           nodeId={node.id}
           data={data as any}
           patchNode={patchNode}
+          setEntryNode={setEntryNode}
         />
+
       ) : null}
 
       {/* ENDING */}
@@ -121,10 +125,11 @@ export default function Inspector() {
   );
 }
 
-function QuestionEditor(props: { nodeId: string; data: any; patchNode: any }) {
-  const { nodeId, data, patchNode } = props;
+function QuestionEditor(props: { nodeId: string; data: any; patchNode: any; setEntryNode: any }) {
+  const { nodeId, data, patchNode, setEntryNode } = props;
   const title = data.title ?? "";
   const answers: Answer[] = (data.answers ?? []) as Answer[];
+  const isEntry = Boolean(data.isEntry);
 
   const setAnswers = (next: Answer[]) => patchNode(nodeId, { answers: next } as any);
 
@@ -132,6 +137,24 @@ function QuestionEditor(props: { nodeId: string; data: any; patchNode: any }) {
     <>
       <label style={lbl}>Заголовок</label>
       <input value={title} onChange={(e) => patchNode(nodeId, { title: e.target.value } as any)} style={inp} />
+
+      <div style={{ marginTop: 10 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, opacity: 0.9 }}>
+        <input
+          type="checkbox"
+          checked={isEntry}
+          onChange={(e) => {
+            if (e.target.checked) setEntryNode(nodeId);
+            else patchNode(nodeId, { isEntry: false } as any); 
+          }}
+        />
+        Входной блок
+        </label>
+
+      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>
+        Стартовая точка сценария
+      </div>
+      </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Ответы</div>
@@ -173,10 +196,6 @@ function QuestionEditor(props: { nodeId: string; data: any; patchNode: any }) {
                 style={{ ...inp, marginTop: 8 }}
                 placeholder="Текст ответа..."
               />
-
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.6 }}>
-                Порт: <span style={{ opacity: 0.9 }}>ans:{a.id}</span>
-              </div>
             </div>
           ))
         )}

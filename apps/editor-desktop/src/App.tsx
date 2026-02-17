@@ -18,6 +18,11 @@ import Inspector from "./editor/inspector/Inspector";
 import ConfirmDelete from "./editor/dialogs/ConfirmDelete";
 import { useEditorStore } from "./editor/store/editorStore";
 import { collectBundle, fromProject } from "./editor/file/projectIO";
+import type { Edge, Node } from "reactflow";
+import { nanoid } from "nanoid";
+import { LicenseGate } from "./auth/LicenseGate";
+
+
 
 
 
@@ -52,12 +57,11 @@ export default function App() {
     const res = await window.branchpro.saveBundle({ ...bundle, filePath: null });
     if (res?.ok) {
       setCurrentFilePath(res.path);
-      markSaved(); // ✅ сброс dirty + saved timestamp
+      markSaved(); 
     }
   }, [nodes, edges, setCurrentFilePath]);
 
   const saveToFile = useCallback(async () => {
-    // ✅ новый проект — Save As
     if (!currentFilePath) {
       await saveAsToFile();
       return;
@@ -66,7 +70,7 @@ export default function App() {
     const res = await window.branchpro.saveBundle({ ...bundle, filePath: currentFilePath });
     if (res?.ok) {
       setCurrentFilePath(res.path);
-      markSaved(); // ✅ сброс dirty + saved timestamp
+      markSaved(); 
     }
   }, [nodes, edges, currentFilePath, setCurrentFilePath, saveAsToFile]);
 
@@ -82,17 +86,16 @@ export default function App() {
       const { nodes: n, edges: e } = fromProject(res.project);
       replaceAll(n, e);
       setTimeout(() => {
-      endLoad();          // твой endLoad должен ставить isDirty=false
+      endLoad();        
     }, 50);
     } finally {
-      // ✅ даём ReactFlow “доприкоснуться” к графу 1 тик
       setTimeout(() => endLoad(), 0);
     }
   }, [beginLoad, endLoad, replaceAll, setCurrentFilePath]);
 
 
   const addQuestion = useEditorStore((s) => s.addQuestion);
-  const addEnding = useEditorStore((s) => (s as any).addEnding); // если TS ругается — поправим типы стора
+  const addEnding = useEditorStore((s) => (s as any).addEnding);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -107,6 +110,120 @@ export default function App() {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const rfRef = useRef<any>(null);
 
+  type CopyBuf = {
+  nodes: Node<any>[];
+  edges: Edge[];
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  pasteCount: number;
+  };
+
+  const copyRef = useRef<CopyBuf | null>(null);
+
+  const getViewportCenterWorld = () => {
+    const inst = rfRef.current;
+    const el = wrapperRef.current;
+    if (!inst || !el) return { x: 0, y: 0 };
+
+    const r = el.getBoundingClientRect();
+    const cx = r.width / 2;
+    const cy = r.height / 2;
+
+    return inst.project({ x: cx, y: cy });
+  };
+
+  const computeBounds = (ns: Node<any>[]) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of ns) {
+      const p = n.position ?? { x: 0, y: 0 };
+      const w = (n as any).width ?? 300;
+      const h = (n as any).height ?? 140;
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + w);
+      maxY = Math.max(maxY, p.y + h);
+    }
+    if (!ns.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    return { minX, minY, maxX, maxY };
+  };
+
+  const copySelection = useCallback(() => {
+    const sel = new Set(useEditorStore.getState().selectedNodeIds);
+    if (sel.size === 0) return;
+
+    const pickedNodes = nodes.filter((n) => sel.has(n.id));
+    if (pickedNodes.length === 0) return;
+
+    const pickedEdges = edges.filter((e) => sel.has(e.source) && sel.has(e.target));
+
+    copyRef.current = {
+      nodes: structuredClone(pickedNodes),
+      edges: structuredClone(pickedEdges),
+      bounds: computeBounds(pickedNodes),
+      pasteCount: 0
+    };
+  }, [nodes, edges]);
+
+  const pasteSelection = useCallback(() => {
+    const buf = copyRef.current;
+    if (!buf || buf.nodes.length === 0) return;
+
+    const center = getViewportCenterWorld();
+    const { minX, minY, maxX, maxY } = buf.bounds;
+
+    const srcCenterX = (minX + maxX) / 2;
+    const srcCenterY = (minY + maxY) / 2;
+
+    const nudge = 26 * (buf.pasteCount + 1);
+
+    const dx = center.x - srcCenterX + nudge;
+    const dy = center.y - srcCenterY + nudge;
+
+    const idMap = new Map<string, string>();
+    for (const n of buf.nodes) idMap.set(n.id, nanoid());
+
+    const newNodes: Node<any>[] = buf.nodes.map((n) => {
+      const newId = idMap.get(n.id)!;
+
+      const nextData =
+        n.type === "questionNode" && (n.data as any)?.kind === "question"
+          ? { ...(n.data as any), isEntry: false }
+          : n.data;
+
+      return {
+        ...n,
+        id: newId,
+        data: nextData,
+        position: {
+          x: (n.position?.x ?? 0) + dx,
+          y: (n.position?.y ?? 0) + dy
+        },
+        selected: true
+      };
+    });
+
+
+  const newEdges: Edge[] = buf.edges.map((e) => ({
+    ...e,
+    id: nanoid(),
+    source: idMap.get(e.source)!,
+    target: idMap.get(e.target)!,
+  }));
+
+  // снимаем выделение со старых
+  const clearedNodes = nodes.map((n) => ({ ...n, selected: false }));
+
+  markDirty();
+  setNodes([...clearedNodes, ...newNodes]);
+  setEdges([...edges, ...newEdges]);
+
+  // обновим selection store
+  setSelection(newNodes.map((n) => n.id), []);
+
+  buf.pasteCount += 1;
+}, [nodes, edges, setNodes, setEdges, markDirty, setSelection]);
+
+
+
   const [box, setBox] = useState<null | { x1: number; y1: number; x2: number; y2: number }>(null);
   const isSelectingRef = useRef(false);
 
@@ -117,10 +234,8 @@ export default function App() {
     const meaningful = changes.some((c: any) => {
       if (c.type === "add" || c.type === "remove") return true;
 
-      // ✅ позиция считается изменением только при реальном перетаскивании
       if (c.type === "position") return !!c.dragging;
 
-      // ❌ select/dimensions и т.п. — это служебное
       return false;
     });
 
@@ -144,6 +259,18 @@ export default function App() {
 
   const onConnect = useCallback(
   (c: Connection) => {
+    const source = c.source ?? "";
+    const target = c.target ?? "";
+    if (!source || !target) return;
+
+    if (source === target) return;
+
+    const sourceHandle = c.sourceHandle ?? "";
+    const exists = edges.some(
+      (e) => e.source === source && (e.sourceHandle ?? "") === sourceHandle
+    );
+    if (exists) return;
+
     if (!isLoadingProject) markDirty();
     setEdges(addEdge(c, edges));
   },
@@ -151,9 +278,28 @@ export default function App() {
 );
 
 
+const isValidConnection = useCallback(
+  (c: Connection) => {
+    const source = c.source ?? "";
+    const target = c.target ?? "";
+    const sourceHandle = c.sourceHandle ?? "";
+
+    if (!source || !target) return false;
 
 
-  // hotkeys: undo/redo/delete/new question
+    if (source === target) return false;
+
+    const alreadyUsed = edges.some(
+      (e) => e.source === source && (e.sourceHandle ?? "") === sourceHandle
+    );
+
+    return !alreadyUsed;
+  },
+  [edges]
+);
+
+
+
   useEffect(() => {
     const isTypingTarget = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
@@ -183,13 +329,22 @@ export default function App() {
       } else if (ctrl && e.code === "KeyS") {
         e.preventDefault();
         saveToFile();
+      } else if (ctrl && code === "KeyC") {
+        e.preventDefault();
+        copySelection();
+        return;
+      } else if (ctrl && code === "KeyV") {
+        e.preventDefault();
+        pasteSelection();
+        return;
       }
     };
 
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo, redo, requestDelete, addQuestion, saveToFile]);
+  }, [undo, redo, requestDelete, addQuestion, saveToFile, copySelection, pasteSelection]);
+
 
   useEffect(() => {
   const off = window.branchpro.onMenuAction?.(async (action: string, token?: string) => {
@@ -231,12 +386,10 @@ export default function App() {
     replaceAll(n, e);
   };
 
-  // 1) подписка на событие
   const off = window.branchpro.onOpenFile?.((filePath: string) => {
     openByPath(filePath);
   });
 
-  // 2) страховка: если событие пришло слишком рано — забираем pending
   (async () => {
     const pending = await window.branchpro.getPendingOpenFile?.();
     if (pending) await openByPath(pending);
@@ -246,7 +399,6 @@ export default function App() {
 }, [replaceAll, setCurrentFilePath]);
 
 
-  // selection box helpers
   const pickRect = (a: number, b: number, c: number, d: number) => ({
     left: Math.min(a, c),
     top: Math.min(b, d),
@@ -286,135 +438,127 @@ export default function App() {
     [nodes, setNodes, setSelection]
   );
 
-  // Shift + Right Click drag selection
   const onWrapperPointerDown = useCallback((e: React.PointerEvent) => {
-  // Shift + ПКМ
-  if (!(e.shiftKey && e.button === 2)) return;
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  // ✅ захватываем указатель
-  (e.currentTarget as any).setPointerCapture?.(e.pointerId);
-
-  // ✅ на время выделения отключаем выделение текста в документе
-  const prevUserSelect = document.body.style.userSelect;
-  document.body.style.userSelect = "none";
-
-  isSelectingRef.current = true;
-  setBox({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY });
-
-  const onMove = (ev: PointerEvent) => {
-    if (!isSelectingRef.current) return;
-    ev.preventDefault();
-    setBox((b) => (b ? { ...b, x2: ev.clientX, y2: ev.clientY } : b));
-  };
-
-  const onUp = (ev: PointerEvent) => {
-    if (!isSelectingRef.current) return;
-    isSelectingRef.current = false;
-
-    // финализируем выделение
-    selectNodesInBox(e.clientX, e.clientY, ev.clientX, ev.clientY);
-    setBox(null);
-
-    // ✅ возвращаем выделение текста обратно
-    document.body.style.userSelect = prevUserSelect;
-
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-  };
-
-  window.addEventListener("pointermove", onMove, { passive: false });
-  window.addEventListener("pointerup", onUp, { passive: false });
-}, [selectNodesInBox]);
+    if (e.button !== 2) return;
 
 
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
-      <div style={{ background: "#0b0b0b", overflow: "hidden" }}>
-        <TopBar />
+    e.preventDefault();
+    e.stopPropagation();
+
+    (e.currentTarget as any).setPointerCapture?.(e.pointerId);
+
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    isSelectingRef.current = true;
+    setBox({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY });
+
+    const onMove = (ev: PointerEvent) => {
+      if (!isSelectingRef.current) return;
+      ev.preventDefault();
+      setBox((b) => (b ? { ...b, x2: ev.clientX, y2: ev.clientY } : b));
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      if (!isSelectingRef.current) return;
+      isSelectingRef.current = false;
+
+      selectNodesInBox(e.clientX, e.clientY, ev.clientX, ev.clientY);
+      setBox(null);
+
+      document.body.style.userSelect = prevUserSelect;
+
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp, { passive: false });
+  }, [selectNodesInBox]);
 
 
+    return (
+    <LicenseGate>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
+        <div style={{ background: "#0b0b0b", overflow: "visible" }}>
+          <TopBar />
 
-        <div
-          ref={wrapperRef}
-          onPointerDown={onWrapperPointerDown}
-          onContextMenu={(e) => e.preventDefault()}
-          style={{
-            height: "calc(100vh - 52px)",
-            overflow: "hidden",
-            position: "relative",
-            userSelect: "none" // ✅ чтобы текст не выделялся на канвасе
-          }}
-
-        >
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onInit={(inst) => (rfRef.current = inst)}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={nodeTypes}
-            fitView
-            selectionOnDrag={false}
-            deleteKeyCode={null}
-            onSelectionChange={({ nodes, edges }) =>
-              setSelection(
-                nodes.map((n) => n.id),
-                edges.map((e) => e.id)
-              )
-}
-
+          <div
+            ref={wrapperRef}
+            onPointerDown={onWrapperPointerDown}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              height: "calc(100vh - 52px)",
+              overflow: "hidden",
+              position: "relative",
+              userSelect: "none"
+            }}
           >
-            <Background />
-            <Controls />
-          </ReactFlow>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onInit={(inst) => (rfRef.current = inst)}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              isValidConnection={isValidConnection}
+              onConnect={onConnect}
+              nodeTypes={nodeTypes}
+              fitView
+              selectionOnDrag={false}
+              deleteKeyCode={null}
+              onSelectionChange={({ nodes, edges }) =>
+                setSelection(
+                  nodes.map((n) => n.id),
+                  edges.map((e) => e.id)
+                )
+              }
+            >
+              <Background />
+              <Controls />
+            </ReactFlow>
 
-          {/* ✅ MiniMap overlay */}
-          <BranchMiniMap
-            open={miniOpen}
-            onToggle={() => setMiniOpen((v) => !v)}
-            nodes={nodes}
-            edges={edges}
-            flowRef={rfRef}
-            wrapperRef={wrapperRef}
-          />
+            <BranchMiniMap
+              open={miniOpen}
+              onToggle={() => setMiniOpen((v) => !v)}
+              nodes={nodes}
+              edges={edges}
+              flowRef={rfRef}
+              wrapperRef={wrapperRef}
+            />
 
+            {box
+              ? (() => {
+                  const rect = pickRect(box.x1, box.y1, box.x2, box.y2);
+                  const wr = wrapperRef.current?.getBoundingClientRect();
+                  return (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: rect.left - (wr?.left ?? 0),
+                        top: rect.top - (wr?.top ?? 0),
+                        width: rect.right - rect.left,
+                        height: rect.bottom - rect.top,
+                        border: "1px solid rgba(125, 211, 252, 0.9)",
+                        background: "rgba(125, 211, 252, 0.12)",
+                        borderRadius: 6,
+                        pointerEvents: "none"
+                      }}
+                    />
+                  );
+                })()
+              : null}
+          </div>
 
-          {/* ✅ selection rectangle */}
-          {box
-            ? (() => {
-                const rect = pickRect(box.x1, box.y1, box.x2, box.y2);
-                const wr = wrapperRef.current?.getBoundingClientRect();
-                return (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: rect.left - (wr?.left ?? 0),
-                      top: rect.top - (wr?.top ?? 0),
-                      width: rect.right - rect.left,
-                      height: rect.bottom - rect.top,
-                      border: "1px solid rgba(125, 211, 252, 0.9)",
-                      background: "rgba(125, 211, 252, 0.12)",
-                      borderRadius: 6,
-                      pointerEvents: "none"
-                    }}
-                  />
-                );
-              })()
-            : null}
+          <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
         </div>
 
-        <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
+        <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
+          <Inspector />
+        </div>
       </div>
-
-      <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
-        <Inspector />
-      </div>
-    </div>
+    </LicenseGate>
   );
+
 }
 
 function TopBar() {
@@ -450,7 +594,7 @@ function TopBar() {
         borderBottom: "1px solid #1f1f1f",
         background: "#0f0f0f",
         color: "#fff",
-        overflow: "hidden"
+        overflow: "visible"
       }}
     >
       <button style={tbBtn} onClick={addQuestion}>➕ Вопрос (Ctrl+N)</button>
@@ -471,7 +615,10 @@ function TopBar() {
       {showSaved ? <div style={{ fontSize: 12, opacity: 0.85 }}>✅ Сохранено</div> : null}
     </div>
 
-      <div style={{ marginLeft: "auto", opacity: 0.75, fontSize: 12 }}>BranchPro Editor</div>
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <AccountMenu />
+      </div>
+
     </div>
   );
 }
@@ -511,7 +658,7 @@ function BranchMiniMap(props: {
 
   const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
-  // ✅ обновляем viewport + wrapper size
+
   useEffect(() => {
     let raf = 0;
     
@@ -546,13 +693,13 @@ function BranchMiniMap(props: {
     };
   }, [props.flowRef, props.wrapperRef]);
 
-  // ✅ ВАЖНО: bounds считаем по node.position (НЕ positionAbsolute)
+
   const model = useMemo(() => {
     const ns = props.nodes ?? [];
     const es = props.edges ?? [];
 
     const items = ns.map((n: any) => {
-      const pos = n.position ?? { x: 0, y: 0 }; // ✅ стабильные world coords
+      const pos = n.position ?? { x: 0, y: 0 };
       const w = n.width ?? 300;
       const h = n.height ?? 140;
       return { id: n.id, x: pos.x, y: pos.y, w, h, data: n.data, selected: !!n.selected };
@@ -622,13 +769,13 @@ function BranchMiniMap(props: {
   const kindFill = (kind: string) => (kind === "ending" ? "rgba(74, 222, 128, 0.26)" : "rgba(125, 211, 252, 0.22)");
   const kindStroke = (kind: string) => (kind === "ending" ? "rgba(74, 222, 128, 0.55)" : "rgba(125, 211, 252, 0.55)");
 
-  // ✅ world <-> minimap
+
   const miniToWorld = (mx: number, my: number) => ({
     x: (mx - PAD) / model.scale + model.minX,
     y: (my - PAD) / model.scale + model.minY
   });
 
-  // ✅ центрировать камеру на точку
+
   const centerCameraTo = (worldX: number, worldY: number, duration = 90) => {
     const inst = props.flowRef.current;
     const wrap = props.wrapperRef.current;
@@ -641,7 +788,7 @@ function BranchMiniMap(props: {
     inst.setViewport({ x: nextX, y: nextY, zoom }, { duration });
   };
 
-  // ✅ zoom относительно world-точки (под курсором)
+
   const zoomAtWorldPoint = (worldX: number, worldY: number, nextZoom: number, duration = 120) => {
     const inst = props.flowRef.current;
     const wrap = props.wrapperRef.current;
@@ -650,13 +797,12 @@ function BranchMiniMap(props: {
     const cur = inst.getViewport();
     const z = clamp(nextZoom, 0.15, 2.5);
 
-    // хотим: worldX/worldY оставались под тем же экранным курсором.
-    // возьмём центр экрана как якорь для “приятности”
+
     const wr = wrap.getBoundingClientRect();
     const cx = wr.width / 2;
     const cy = wr.height / 2;
 
-    // сделаем так, чтобы выбранная world-точка стала центром (чуть мягче UX)
+
     const nextX = -worldX * z + cx;
     const nextY = -worldY * z + cy;
 
@@ -697,7 +843,6 @@ function BranchMiniMap(props: {
 
   const camOpacity = useMemo(() => 0.35 + camPulse * 0.55, [camPulse]);
 
-  // ✅ Click (центр)
   const onMiniClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (draggingRef.current) return;
     if (!svgRef.current) return;
@@ -713,7 +858,6 @@ function BranchMiniMap(props: {
     centerCameraTo(w.x, w.y, 220);
   };
 
-  // ✅ Double click = zoom-in to point
   const onMiniDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!svgRef.current) return;
     e.preventDefault();
@@ -727,7 +871,7 @@ function BranchMiniMap(props: {
     zoomAtWorldPoint(w.x, w.y, vp.zoom * 1.25, 160);
   };
 
-  // ✅ Drag to pan
+
   const onMiniPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!svgRef.current) return;
 
@@ -755,7 +899,7 @@ function BranchMiniMap(props: {
     const my = clamp(e.clientY - r.top, 0, H);
 
     const w = miniToWorld(mx, my);
-    centerCameraTo(w.x, w.y, 0); // мгновенно, чтобы не “накапливалась” анимация
+    centerCameraTo(w.x, w.y, 0); 
   };
 
   const onMiniPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -765,7 +909,7 @@ function BranchMiniMap(props: {
     draggingRef.current = false;
   };
 
-  // ✅ Wheel zoom
+
   const onMiniWheel = (e: React.WheelEvent<SVGSVGElement>) => {
     if (!svgRef.current) return;
 
@@ -777,15 +921,11 @@ function BranchMiniMap(props: {
     const my = clamp(e.clientY - r.top, 0, H);
     const w = miniToWorld(mx, my);
 
-    const dir = Math.sign(e.deltaY); // + вниз (zoom out), - вверх (zoom in)
+    const dir = Math.sign(e.deltaY); 
     const factor = dir > 0 ? 1 / 1.12 : 1.12;
 
     zoomAtWorldPoint(w.x, w.y, vp.zoom * factor, 80);
   };
-
-  // zoom buttons
-  const zoomIn = () => zoomAtWorldPoint(0, 0, vp.zoom * 1.15, 120);
-  const zoomOut = () => zoomAtWorldPoint(0, 0, vp.zoom / 1.15, 120);
 
   const panelStyle: React.CSSProperties = {
     position: "absolute",
@@ -848,7 +988,7 @@ function BranchMiniMap(props: {
   return (
     <div
       style={panelStyle}
-      onPointerDown={(e) => e.stopPropagation()} // ✅ чтобы Shift+ПКМ выделение не стартовало на миникарте
+      onPointerDown={(e) => e.stopPropagation()} 
       onContextMenu={(e) => e.preventDefault()}
     >
       <div style={headerStyle}>
@@ -925,6 +1065,417 @@ function BranchMiniMap(props: {
 }
 
 
+function AccountMenu() {
+  
+
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState<null | {
+    user?: { id?: number; email?: string; name?: string } | null;
+    entitlements?: {
+      plan?: string;
+      isValid?: boolean;
+      isLifetime?: boolean;
+      validUntil?: string | null;
+    } | null;
+    entitled?: boolean;
+  }>(null);
+
+  const auth: any = (window as any).branchproAuth;
+
+  const cabinetUrl = "https://your-domain.com"; // <- поставь кабинет/лицензии
+
+  const initials = (nameOrEmail?: string) => {
+    const s = (nameOrEmail || "").trim();
+    if (!s) return "U";
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    // email
+    if (s.includes("@")) return s[0].toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  };
+
+  const planLabel = (p?: string) => {
+    if (p === "enterprise") return "Enterprise";
+    if (p === "pro") return "Pro";
+    return "Free";
+  };
+
+  const planTone = (p?: string) => {
+    if (p === "enterprise") return { bg: "rgba(74,222,128,0.12)", br: "rgba(74,222,128,0.25)", fg: "rgba(74,222,128,0.95)" };
+    if (p === "pro") return { bg: "rgba(125,211,252,0.12)", br: "rgba(125,211,252,0.25)", fg: "rgba(125,211,252,0.95)" };
+    return { bg: "rgba(255,255,255,0.06)", br: "rgba(255,255,255,0.14)", fg: "rgba(255,255,255,0.75)" };
+  };
+
+  const untilLabel = (iso?: string | null, lifetime?: boolean) => {
+    if (lifetime) return "Lifetime";
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleDateString();
+  };
+
+  const load = async () => {
+    if (!auth?.status) return;
+    const s = await auth.status();
+    setData({
+      user: s?.user ?? null,
+      entitlements: s?.entitlements ?? null,
+      entitled: !!s?.entitled
+    });
+  };
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // initial load + refresh each minute
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        await load();
+      } catch {
+        // ignore
+      }
+    })();
+
+    const id = window.setInterval(() => {
+      if (!alive) return;
+      load().catch(() => {});
+    }, 60_000);
+
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // click-outside close
+  useEffect(() => {
+  if (!open) return;
+
+  const onDownCapture = (e: PointerEvent) => {
+    const root = rootRef.current;
+    const t = e.target as Node | null;
+    if (!root || !t) return;
+
+    // если клик внутри нашей кнопки/меню — НЕ закрываем
+    if (root.contains(t)) return;
+
+    setOpen(false);
+  };
+
+  // 👇 capture=true важно, чтобы мы отрабатывали раньше ReactFlow
+  window.addEventListener("pointerdown", onDownCapture, true);
+  return () => window.removeEventListener("pointerdown", onDownCapture, true);
+}, [open]);
+
+
+
+  const userEmail = data?.user?.email || "";
+  const userName = data?.user?.name || "";
+  const plan = data?.entitlements?.plan || "free";
+  const isValid = data?.entitlements?.isValid ?? false;
+  const isLifetime = data?.entitlements?.isLifetime ?? false;
+  const validUntil = data?.entitlements?.validUntil ?? null;
+
+  const badge = planTone(plan);
+  const badgeText = planLabel(plan);
+  const until = untilLabel(validUntil, isLifetime);
+
+  const avatarText = initials(userName || userEmail);
+
+  const stop = (e: any) => {
+    e.stopPropagation();
+  };
+
+  const copyText = async (t: string) => {
+    try {
+      await navigator.clipboard.writeText(t);
+    } catch {
+      // fallback
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  };
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <button
+        style={acc.btn}
+        onClick={async (e) => {
+        e.stopPropagation();
+        setOpen((v) => !v);
+        try { await load(); } catch {}
+        }}
+
+        title={userEmail || "Account"}
+      >
+        <div style={acc.avatar}>{avatarText}</div>
+
+        <div style={{ display: "grid", lineHeight: 1.1 }}>
+          <div style={acc.title}>
+            {userName || userEmail || "Аккаунт"}
+          </div>
+          <div style={acc.sub}>
+            {userEmail ? userEmail : "не авторизован"}
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        <div style={{ ...acc.badge, background: badge.bg, borderColor: badge.br, color: badge.fg }}>
+          {badgeText}
+        </div>
+
+        <div style={acc.chev}>▾</div>
+      </button>
+
+      {open ? (
+        <div style={acc.menu} onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+          <div style={acc.menuHead}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div style={{ ...acc.avatar, width: 36, height: 36, fontSize: 12 }}>{avatarText}</div>
+
+              <div style={{ display: "grid", gap: 2 }}>
+                <div style={{ fontWeight: 900, fontSize: 13 }}>
+                  {userName || "BranchPro Account"}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.78 }}>
+                  {userEmail || "—"}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ ...acc.pill, background: badge.bg, borderColor: badge.br, color: badge.fg }}>
+                {badgeText}
+              </div>
+
+              <div
+                style={{
+                  ...acc.pill,
+                  background: isValid ? "rgba(74,222,128,0.10)" : "rgba(251,191,36,0.10)",
+                  borderColor: isValid ? "rgba(74,222,128,0.22)" : "rgba(251,191,36,0.22)",
+                  color: isValid ? "rgba(74,222,128,0.95)" : "rgba(251,191,36,0.95)"
+                }}
+              >
+                {isValid ? "Активна" : "Неактивна"}
+              </div>
+
+              {until ? (
+                <div style={acc.pillMuted}>
+                  до: <b style={{ opacity: 0.95 }}>{until}</b>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div style={acc.sep} />
+
+          <button
+            className="bp-acc-item"
+            style={acc.item}
+            onClick={() => {
+              setOpen(false);
+              window.open(cabinetUrl, "_blank");
+            }}
+          >
+            <span style={acc.ico}>🌐</span>
+            Открыть кабинет
+            <span style={{ marginLeft: "auto", opacity: 0.55, fontSize: 11 }}>Licenses</span>
+          </button>
+
+          <button
+            className="bp-acc-item"
+            style={acc.item}
+            onClick={async () => {
+              if (!userEmail) return;
+              await copyText(userEmail);
+            }}
+          >
+            <span style={acc.ico}>📋</span>
+            Скопировать email
+          </button>
+
+          <button
+            className="bp-acc-item"
+            style={acc.item}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await auth?.refresh?.();
+                await load();
+              } finally {
+                setBusy(false);
+              }
+            }}
+            disabled={busy}
+          >
+            <span style={acc.ico}>🔄</span>
+            {busy ? "Обновляем…" : "Обновить статус"}
+          </button>
+
+          <div style={acc.sep} />
+
+          <button
+            style={{ ...acc.item, color: "rgba(255,107,107,0.95)" }}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await auth?.logout?.();
+              } finally {
+                setBusy(false);
+                setOpen(false);
+                // после выхода — Gate покажет логин
+                window.location.reload();
+              }
+            }}
+            disabled={busy}
+          >
+            <span style={acc.ico}>🚪</span>
+            Выйти
+          </button>
+
+          <div style={acc.menuFoot}>
+            <span style={{ opacity: 0.65 }}>Protected mode</span>
+            <span style={{ opacity: 0.55 }}>DPAPI token storage</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const acc: Record<string, React.CSSProperties> = {
+  btn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    cursor: "pointer",
+    maxWidth: 520,
+    minWidth: 260,
+    boxSizing: "border-box",
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+    fontSize: 11,
+    background: "rgba(125,211,252,0.14)",
+    border: "1px solid rgba(125,211,252,0.22)",
+    color: "rgba(125,211,252,0.95)",
+    flex: "0 0 auto",
+  },
+  title: {
+    fontSize: 12.5,
+    fontWeight: 900,
+    maxWidth: 220,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  sub: {
+    fontSize: 11.5,
+    opacity: 0.72,
+    maxWidth: 220,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  badge: {
+    fontSize: 11,
+    fontWeight: 900,
+    padding: "4px 9px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    flex: "0 0 auto",
+  },
+  chev: { opacity: 0.65, fontSize: 12, paddingLeft: 2 },
+
+  menu: {
+    position: "absolute",
+    right: 0,
+    top: "calc(100% + 10px)",
+    width: 360,
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(15,15,15,0.98)",
+    boxShadow: "0 22px 70px rgba(0,0,0,0.65)",
+    overflow: "hidden",
+    zIndex: 9999,
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+  },
+  menuHead: { padding: 12 },
+  sep: { height: 1, background: "rgba(255,255,255,0.08)" },
+  item: {
+    width: "100%",
+    textAlign: "left",
+    padding: "10px 12px",
+    border: "none",
+    background: "transparent",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 12.8,
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    boxSizing: "border-box",
+  },
+  ico: { width: 18, textAlign: "center", opacity: 0.95 },
+  pill: {
+    padding: "4px 9px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    fontSize: 11.2,
+    fontWeight: 900,
+  },
+  pillMuted: {
+    padding: "4px 9px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.05)",
+    fontSize: 11.2,
+    opacity: 0.8,
+  },
+  menuFoot: {
+    padding: "10px 12px",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: 11.2,
+  },
+};
+
+// hover/active эффекты (один раз)
+const accStyleId = "bp-account-menu-style";
+if (typeof document !== "undefined" && !document.getElementById(accStyleId)) {
+  const s = document.createElement("style");
+  s.id = accStyleId;
+  s.textContent = `
+    .bp-acc-item:hover { background: rgba(255,255,255,0.05); }
+    .bp-acc-item:active { transform: translateY(1px); }
+  `;
+  document.head.appendChild(s);
+}
+
+
+
 function basename(p: string) {
   return String(p).split(/[\\/]/).pop() ?? p;
 }
+

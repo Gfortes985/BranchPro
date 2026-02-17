@@ -1,6 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
-
-let mediaRoot = null;
+console.log("[preload] loaded ✅");
 
 contextBridge.exposeInMainWorld("branchpro", {
   pickMedia: () => ipcRenderer.invoke("pickMedia"),
@@ -24,9 +23,16 @@ contextBridge.exposeInMainWorld("branchpro", {
   openBundleAtPath: (filePath) => ipcRenderer.invoke("project:openBundleAtPath", filePath),
   setDirty: (dirty) => ipcRenderer.send("project:dirty", !!dirty),
   reportSaveResult: (token, ok, path) =>
-  ipcRenderer.send("project:saveResult", { token, ok: !!ok, path: path ?? null }),
+    ipcRenderer.send("project:saveResult", { token, ok: !!ok, path: path ?? null }),
   getPendingOpenFile: () => ipcRenderer.invoke("project:getPendingOpenFile"),
-
-
-
 });
+
+// 🔐 отдельный namespace для auth, чтобы не мешать старому API
+contextBridge.exposeInMainWorld("branchproAuth", {
+  status: () => ipcRenderer.invoke("auth:status"),
+  login: (email, password) => ipcRenderer.invoke("auth:login", { email, password }),
+  logout: () => ipcRenderer.invoke("auth:logout"),
+  refresh: () => ipcRenderer.invoke("auth:refresh"),
+  refreshHard: () => ipcRenderer.invoke("auth:forceRefresh"),
+});
+console.log("[preload] branchproAuth exposed:", typeof window !== "undefined");
