@@ -23,7 +23,7 @@ export function LicenseGate(props: { children: React.ReactNode }) {
   const appName = "BranchPro Editor";
   const subtitle = "Вход по лицензии Pro или Enterprise";
 
-  const buyUrl = "https://your-domain.com"; // <- поменяй на страницу покупки/кабинета
+  const buyUrl = "http://81.30.105.141"; // <- поменяй на страницу покупки/кабинета
 
   const formatUntil = (iso?: string | null) => {
     if (!iso) return null;
@@ -223,8 +223,8 @@ export function LicenseGate(props: { children: React.ReactNode }) {
                   {busy ? "Входим…" : "Войти"}
                 </button>
 
-                <button style={styles.btnGhost} onClick={check} disabled={busy}>
-                  Проверить токен
+                <button style={styles.btnGhost} onClick={() => window.open(buyUrl+"/register", "_blank")} disabled={busy}>
+                  Зарегистрироваться
                 </button>
               </div>
 

@@ -12,6 +12,14 @@
     "electron:dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main.cjs",
     "dist": "npm run build && electron-builder"
   },
+  "overrides": {
+  "ajv": "^8.18.0",
+  "ajv-keywords": "^5.1.0",
+  "minimatch": "^3.1.2",
+  "got": "^11.8.6",
+  "package-json": "^10.0.0",
+  "app-builder-lib": "24.13.3"
+  },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
     "immer": "^10.1.1",
@@ -30,7 +38,7 @@
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
     "electron": "^40.4.0",
-    "electron-builder": "^26.7.0",
+    "electron-builder": "24.13.3",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
     "vite": "^7.3.1"

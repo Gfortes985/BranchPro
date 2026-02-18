@@ -234,6 +234,8 @@ const lbl: React.CSSProperties = { display: "block", marginTop: 12, fontSize: 12
 
 const inp: React.CSSProperties = {
   width: "100%",
+  maxWidth: "100%",
+  boxSizing: "border-box",
   marginTop: 6,
   padding: "10px 10px",
   borderRadius: 10,
