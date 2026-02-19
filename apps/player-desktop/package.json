@@ -1,9 +1,0 @@
-{
-  "name": "branchpro-player-desktop",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "echo player-desktop not ready yet",
-    "build": "echo player-desktop not ready yet"
-  }
-}

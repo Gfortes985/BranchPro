@@ -1083,7 +1083,7 @@ function AccountMenu() {
 
   const auth: any = (window as any).branchproAuth;
 
-  const cabinetUrl = "https://your-domain.com"; // <- поставь кабинет/лицензии
+  const cabinetUrl = "http://81.30.105.141/dashboard"; // <- поставь кабинет/лицензии
 
   const initials = (nameOrEmail?: string) => {
     const s = (nameOrEmail || "").trim();
