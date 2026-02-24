@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactFlow, { Background, Node, Edge, Controls } from "reactflow";
 import "reactflow/dist/style.css";
 import axios from "axios";
+import { QRCodeSVG } from "qrcode.react";
 
 type Network = {
   id: string;
@@ -29,6 +30,8 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   const selected = nets.find((n) => n.id === selectedId) ?? null;
 
   const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null); // ms timestamp
+  const [pairLeftSec, setPairLeftSec] = useState<number>(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [newName, setNewName] = useState("");
@@ -73,12 +76,16 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     setSelectedId(id);
     setPairCode(null);
     setMsg("");
+    setPairExpiresAt(null);
+    setPairLeftSec(0);
   };
 
   const leaveNetwork = () => {
     setSelectedId(null);
     setPairCode(null);
     setMsg("");
+    setPairExpiresAt(null);
+    setPairLeftSec(0);
   };
 
   const startPairingInNet = async () => {
@@ -87,7 +94,16 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     setMsg("");
     try {
       const { data } = await api.post(`/v1/networks/${selectedId}/pairing/start`);
-      setPairCode(data.code);
+
+      const code = data.code as string;
+      const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60); // ✅ если сервер не прислал — 60 сек
+
+      setPairCode(code);
+
+      const expiresAt = Date.now() + Math.max(1, expiresInSec) * 1000;
+      setPairExpiresAt(expiresAt);
+      setPairLeftSec(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)));
+
       setMsg("Код создан ✅");
     } catch (e: any) {
       setMsg("Ошибка создания кода: " + (e?.message ?? String(e)));
@@ -149,6 +165,63 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.serverOk, props.baseUrl]);
+
+  useEffect(() => {
+  if (!pairExpiresAt || !pairCode || !selectedId || !props.serverOk) return;
+
+  let refreshing = false;
+
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((pairExpiresAt - Date.now()) / 1000));
+    setPairLeftSec(left);
+
+    // ✅ истёк — обновляем автоматически
+    if (left <= 0 && !refreshing) {
+      refreshing = true;
+      // не блокируем UI общим busy — можно обновлять тихо
+      api
+        .post(`/v1/networks/${selectedId}/pairing/start`)
+        .then(({ data }) => {
+          const code = data.code as string;
+          const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60);
+
+          setPairCode(code);
+
+          const expiresAt = Date.now() + Math.max(1, expiresInSec) * 1000;
+          setPairExpiresAt(expiresAt);
+          setPairLeftSec(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)));
+          setMsg("Код обновлён ✅");
+        })
+        .catch(() => {
+          // если сервер временно недоступен — просто покажем сообщение и остановим автообновление
+          setMsg("Не удалось обновить код ❌");
+          setPairExpiresAt(null);
+          setPairLeftSec(0);
+        })
+        .finally(() => {
+          refreshing = false;
+        });
+    }
+  };
+
+  tick();
+  const t = window.setInterval(tick, 250);
+
+  return () => window.clearInterval(t);
+}, [pairExpiresAt, pairCode, selectedId, props.serverOk, props.baseUrl]);
+
+const serverInfo = useMemo(() => {
+  try {
+    const u = new URL(props.baseUrl);
+    return {
+      serverUrl: u.origin,
+      serverHost: u.hostname,
+      serverPort: u.port || (u.protocol === "https:" ? "443" : "80"),
+    };
+  } catch {
+    return { serverUrl: props.baseUrl, serverHost: "", serverPort: "" };
+  }
+}, [props.baseUrl]);
 
   return (
     <div style={S.page}>
@@ -229,11 +302,35 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
               </button>
 
               {pairCode ? (
-                <div className="bpCodeBox" style={{ marginTop: 10 }}>
-                  <div className="bpCode">{pairCode}</div>
-                  <div className="bpMuted" style={{ marginTop: 6 }}>
-                    Введи этот код на плеере
+                <div className="bpCodeBox" style={{ marginTop: 10, textAlign: "center" }}>
+                  <QRCodeSVG
+                    value={JSON.stringify({
+                      type: "branchpro-pair",          
+                      ...serverInfo,
+                      networkId: selectedId,
+                      code: pairCode,
+                    })}
+                    size={180}
+                    bgColor="#0b0b0c"
+                    fgColor="#ffffff"
+                  />
+
+                  <div className="bpCode" style={{ marginTop: 12 }}>
+                    {pairCode}
                   </div>
+
+                  <div className="bpMuted" style={{ marginTop: 6 }}>
+                    {pairLeftSec > 0 ? (
+                      <>Обновится через: <b>{pairLeftSec}</b> сек</>
+                    ) : (
+                      <>Обновляю код…</>
+                    )}
+                  </div>
+
+                  <div className="bpMuted" style={{ marginTop: 6 }}>
+                    Отсканируй QR на плеере
+                  </div>
+
                 </div>
               ) : null}
 
@@ -286,7 +383,10 @@ const S: Record<string, any> = {
     display: "grid",
     gridTemplateColumns: "380px 1fr",
     gap: 14,
-    height: "100vh",
+    height: "100%",     
+    width: "100%",      
+    minWidth: 0,        
+    minHeight: 0,       
     padding: 12,
     boxSizing: "border-box",
   },
@@ -297,6 +397,8 @@ const S: Record<string, any> = {
   right: {
     minHeight: 0,
     overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
   row: {
     display: "flex",

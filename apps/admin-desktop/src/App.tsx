@@ -25,12 +25,16 @@ function normalizeUrl(u: string) {
 }
 
 export default function App() {
+  
   const [page, setPage] = useState<Page>("dashboard");
 
   const [serverUrl, setServerUrl] = useState(localStorage.getItem("bp_server_url") ?? "http://localhost:3000");
   const baseUrl = useMemo(() => normalizeUrl(serverUrl), [serverUrl]);
 
   const api = useMemo(() => axios.create({ baseURL: baseUrl }), [baseUrl]);
+
+  const isNetworks = page === "networks";
+  const sidebarCollapsed = isNetworks;
 
   // connection state
   const [serverOk, setServerOk] = useState<boolean | null>(null);
@@ -56,7 +60,6 @@ export default function App() {
     try {
       const r = await api.get("/v1/health");
       setServerOk(!!r.data?.ok || r.status === 200);
-      setToast("✅ Сервер доступен");
     } catch (e: any) {
       setServerOk(false);
       setToast("❌ Сервер недоступен: " + (e?.message ?? String(e)));
@@ -115,7 +118,7 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="side">
+      <aside className={`side ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="brand">
           <div className="brandName">BranchPro</div>
           <div className="brandSub">Admin Desktop</div>

@@ -1,17 +1,42 @@
 :root { color-scheme: dark; }
-body { margin:0; font-family: ui-sans-serif, system-ui; background:#0b0b0c; color:#fff; }
 
-.shell { display:flex; height:100vh; }
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui;
+  background: #0b0b0c;
+  color: #fff;
+}
+
+/* ===== App layout ===== */
+
+.shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;          /* ✅ важно: занимаем всю ширину окна */
+  overflow: hidden;      /* ✅ ничего не вылезает за экран */
+}
+
+/* ===== Sidebar ===== */
 
 .side{
-  width:260px;
-  background:rgba(14,14,16,0.98);
-  border-right:1px solid rgba(255,255,255,0.08);
-  padding:14px;
-  display:flex;
-  flex-direction:column;
-  gap:14px;
+  flex: 0 0 260px;       /* ✅ фикс ширина, не “съедает” main */
+  width: 260px;
+  background: rgba(14,14,16,0.98);
+  border-right: 1px solid rgba(255,255,255,0.08);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  transition: width 180ms ease;
+  overflow: hidden;      /* чтобы текст не торчал при анимации */
 }
+
 .brand { padding:10px 10px 6px; }
 .brandName { font-weight:900; font-size:18px; }
 .brandSub { opacity:.55; font-size:12px; margin-top:3px; }
@@ -36,17 +61,45 @@ body { margin:0; font-family: ui-sans-serif, system-ui; background:#0b0b0c; colo
 
 .sideFooter { margin-top:auto; padding:8px 6px; display:flex; flex-direction:column; gap:8px; }
 
-.main { flex:1; display:flex; flex-direction:column; }
+/* ===== Main ===== */
+
+.main{
+  flex: 1 1 auto;        /* ✅ занимает всё свободное место */
+  min-width: 0;          /* ✅ иначе grid/ReactFlow могут ломать растяжку */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* top header */
 .top{
   padding:16px 18px;
   border-bottom:1px solid rgba(255,255,255,0.08);
   background:rgba(10,10,12,0.92);
   display:flex; justify-content:space-between; align-items:flex-end; gap:12px;
+  flex: 0 0 auto;
 }
+
 .ttl { font-weight:900; font-size:18px; }
 .sub { opacity:.6; font-size:12px; margin-top:4px; }
 
-.content { padding:18px; display:grid; gap:14px; overflow:auto; }
+/* content under header */
+.content{
+  flex: 1 1 auto;        /* ✅ растягиваемся под header */
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;         /* ✅ чтобы NetworksPage/другие страницы растягивались */
+}
+
+/* любой рутовый компонент страницы внутри content */
+.content > *{
+  flex: 1 1 auto;        /* ✅ NetworksPage займет всю ширину/высоту */
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ===== Common UI ===== */
 
 .card{
   border:1px solid rgba(255,255,255,.10);
@@ -108,4 +161,37 @@ body { margin:0; font-family: ui-sans-serif, system-ui; background:#0b0b0c; colo
   border-radius:14px;
   padding:10px 12px;
   opacity:.9;
+}
+
+/* ===== Sidebar collapse on Networks ===== */
+
+.side.collapsed {
+  width: 64px;
+  flex-basis: 64px;      /* ✅ чтобы flex тоже “знал” новую ширину */
+}
+
+.side.collapsed .brandName,
+.side.collapsed .brandSub,
+.side.collapsed .sideLabel,
+.side.collapsed .sideFooter .muted {
+  display: none;
+}
+
+.side.collapsed .nav {
+  justify-content: center;
+  padding: 10px 8px;
+}
+
+.side.collapsed .nav span:last-child {
+  display: none;
+}
+
+.side.collapsed .navIcon {
+  margin: 0;
+  font-size: 18px;
+}
+
+.side.collapsed .sideBlock {
+  padding-left: 6px;
+  padding-right: 6px;
 }
