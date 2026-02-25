@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import ReactFlow, { Background, Node, Edge, Controls } from "reactflow";
+import ReactFlow, {
+  Background,
+  Controls,
+  Edge,
+  Node,
+  NodeProps,
+  useEdgesState,
+  useNodesState,
+} from "reactflow";
 import "reactflow/dist/style.css";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
+import { Handle, Position } from "reactflow";
+import { io, Socket } from "socket.io-client";
+
 
 type Network = {
   id: string;
@@ -22,21 +33,99 @@ type Network = {
   }>;
 };
 
+function NetworkNode({ data }: any) {
+  return (
+    <div style={nodeStyles.wrap}>
+      <div style={nodeStyles.icon}>{data.icon}</div>
+      <div style={nodeStyles.label}>{data.label}</div>
+    </div>
+  );
+}
+
+const nodeStyles: any = {
+  wrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "12px 18px",
+    borderRadius: 18,
+    background: "rgba(20,20,24,0.75)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    backdropFilter: "blur(12px)",
+    color: "#fff",
+    fontWeight: 700,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+  },
+  icon: {
+    opacity: 0.9,
+    fontSize: 16,
+  },
+  label: {
+    fontSize: 14,
+  },
+};
+
+function EmojiNode({ data }: NodeProps<any>) {
+  const size = data.kind === "net" ? 44 : 36;
+
+  return (
+    <div className={`emoNode ${data.kind === "net" ? "net" : "dev"}`}>
+      {/* скрытые точки для ReactFlow (чтобы линии работали) */}
+      <Handle type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: "none" }} />
+
+      <div className="emoIcon" style={{ fontSize: size }}>{data.icon}</div>
+      <div className="emoLabel">{data.label}</div>
+      {data.sub ? <div className="emoSub">{data.sub}</div> : null}
+    </div>
+  );
+}
+
+function defaultPos(i: number, n: number) {
+  // раскладка по кольцам: 10 узлов на кольцо, радиус растёт
+  const perRing = 10;
+  const ring = Math.floor(i / perRing);
+  const idx = i % perRing;
+
+  const countOnRing = Math.min(perRing, n - ring * perRing);
+  const angle = (2 * Math.PI * idx) / Math.max(1, countOnRing);
+
+  const r = 220 + ring * 160; // радиус колец
+  return {
+    x: Math.round(r * Math.cos(angle)),
+    y: Math.round(r * Math.sin(angle)),
+  };
+}
+
 export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   const api = useMemo(() => axios.create({ baseURL: props.baseUrl }), [props.baseUrl]);
+
+  const [deployMap, setDeployMap] = useState<Record<string, any>>({});
 
   const [nets, setNets] = useState<Network[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = nets.find((n) => n.id === selectedId) ?? null;
+  const selectedSig = useMemo(() => {
+    if (!selected) return "";
+    return selected.devices
+      .map((d) => `${d.deviceId}:${d.x ?? "n"},${d.y ?? "n"}:${d.device.online ? 1 : 0}:${d.device.name ?? ""}`)
+      .join("|");
+  }, [selected]);
 
   const [pairCode, setPairCode] = useState<string | null>(null);
-  const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null); // ms timestamp
+  const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null);
   const [pairLeftSec, setPairLeftSec] = useState<number>(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [newName, setNewName] = useState("");
+  const nodeTypes = useMemo(() => ({ emoji: EmojiNode }), []);
 
-  const isNetView = !!selectedId; // ✅ если выбрана сеть — показываем меню сети вместо списка
+  const isNetView = !!selectedId;
+
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  const [adminSocket, setAdminSocket] = useState<Socket | null>(null);
 
   const load = async () => {
     if (!props.serverOk) return;
@@ -74,6 +163,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
 
   const enterNetwork = (id: string) => {
     setSelectedId(id);
+    adminSocket?.emit("SUB_NET", { networkId: id });
     setPairCode(null);
     setMsg("");
     setPairExpiresAt(null);
@@ -81,6 +171,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   };
 
   const leaveNetwork = () => {
+    if (selectedId) adminSocket?.emit("UNSUB_NET", { networkId: selectedId });
     setSelectedId(null);
     setPairCode(null);
     setMsg("");
@@ -113,46 +204,149 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   };
 
   // Graph build
-  const { nodes, edges } = useMemo(() => {
-    if (!selected) return { nodes: [] as Node[], edges: [] as Edge[] };
+  useEffect(() => {
+  if (!selected) {
+    setNodes([]);
+    setEdges([]);
+    return;
+  }
 
-    const centerId = "net";
-    const netNode: Node = {
-      id: centerId,
-      position: { x: 0, y: 0 },
-      data: { label: `🕸️ ${selected.name}` },
-      type: "default",
-    };
+  const centerId = "net";
 
-    const devNodes: Node[] = selected.devices.map((nd, i) => ({
+  const netNode: Node = {
+    id: centerId,
+    position: { x: 0, y: 0 },
+    data: { kind: "net", icon: "🌍", label: selected.name },
+    type: "emoji",
+    draggable: false,
+    selectable: false,
+  };
+
+  const devNodes: Node[] = selected.devices.map((nd, i) => {
+    const p =
+      nd.x != null && nd.y != null
+        ? { x: nd.x, y: nd.y }
+        : defaultPos(i, selected.devices.length);
+
+    return {
       id: nd.deviceId,
-      position: {
-        x: nd.x ?? Math.round(260 * Math.cos(i)),
-        y: nd.y ?? Math.round(260 * Math.sin(i)),
-      },
+      position: p,
       data: {
-        label: `${nd.device.online ? "🟢" : "⚪"} ${nd.device.name || nd.device.id.slice(0, 6)}`,
+        kind: "dev",
+        icon: "📱",
+        label: nd.device.name || nd.device.id.slice(0, 6),
+        sub: nd.device.online ? "online" : "offline",
       },
-      type: "default",
-    }));
+      type: "emoji",
+      draggable: true,
+      selectable: true,
+    };
+  });
 
-    const devEdges: Edge[] = selected.devices.map((nd) => ({
-      id: `e-${centerId}-${nd.deviceId}`,
-      source: centerId,
-      target: nd.deviceId,
-    }));
+  
 
-    return { nodes: [netNode, ...devNodes], edges: devEdges };
-  }, [selected]);
+  const devEdges: Edge[] = selected.devices.map((nd) => ({
+    id: `e-${centerId}-${nd.deviceId}`,
+    source: centerId,
+    target: nd.deviceId,
+    type: "straight",
+    style: { stroke: "rgba(255,255,255,0.22)", strokeWidth: 2 },
+  }));
+
+  // ✅ не перетираем позиции, которые пользователь уже перетаскивал в текущей сессии
+  setNodes((prev) => {
+    const prevPos = new Map(prev.map((n: any) => [n.id, n.position]));
+    return [netNode, ...devNodes].map((n) => {
+      if (n.id !== "net" && prevPos.has(n.id)) {
+        return { ...n, position: prevPos.get(n.id) };
+      }
+      return n;
+    });
+  });
+
+  setEdges(devEdges);
+}, [selectedId, selectedSig]); // ✅ вот ключ: следим за изменениями устройств/online/координат // этого достаточно
+
+    useEffect(() => {
+      if (!props.baseUrl) return;
+
+      const s = io(`${props.baseUrl}/admin`, {
+        transports: ["websocket"],
+        reconnection: true,
+        reconnectionDelay: 500,
+        reconnectionDelayMax: 3000,
+      });
+
+      setAdminSocket(s);
+
+      s.on("connect", () => {
+        // можно лог
+      });
+
+      // если сервер говорит "сеть изменилась" — просто reload
+      s.on("NET_CHANGED", (e: any) => {
+        if (!selectedId) return;
+        if (e?.networkId === selectedId) load();
+      });
+
+      // (опционально) можно слушать device online/offline
+      s.on("DEVICE_ONLINE", () => {
+        if (selectedId) load();
+      });
+      s.on("DEVICE_OFFLINE", () => {
+        if (selectedId) load();
+      });
+
+      // deploy stream
+      s.on("DEPLOY_PROGRESS", (p: any) => {
+        const deviceId = String(p.deviceId ?? "");
+        if (!deviceId) return;
+        setDeployMap((m) => ({ ...m, [deviceId]: p }));
+      });
+
+      s.on("DEPLOY_RESULT", (p: any) => {
+        const deviceId = String(p.deviceId ?? "");
+        if (!deviceId) return;
+        setDeployMap((m) => ({ ...m, [deviceId]: p }));
+      });
+
+      return () => {
+        s.disconnect();
+        setAdminSocket(null);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [props.baseUrl]);
+
+    useEffect(() => {
+      if (!props.serverOk || !selectedId) return;
+      const t = window.setInterval(() => load(), 2000);
+      return () => window.clearInterval(t);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [props.serverOk, selectedId, props.baseUrl]);
+
+    useEffect(() => {
+      if (!adminSocket) return;
+      if (!selectedId) return;
+      adminSocket.emit("SUB_NET", { networkId: selectedId });
+      return () => {
+        adminSocket.emit("UNSUB_NET", { networkId: selectedId });
+      };
+    }, [adminSocket, selectedId]);
 
   // save layout after drag stop
   const onNodeDragStop = async (_: any, node: Node) => {
     if (!selectedId) return;
     if (node.id === "net") return;
 
-    const payload = nodes
-      .filter((n) => n.id !== "net")
-      .map((n) => ({ deviceId: n.id, x: n.position.x, y: n.position.y }));
+    let payload: Array<{ deviceId: string; x: number; y: number }> = [];
+
+    setNodes((nds) => {
+      const next = nds.map((n) => (n.id === node.id ? { ...n, position: node.position } : n));
+      payload = next
+        .filter((n) => n.id !== "net")
+        .map((n) => ({ deviceId: n.id, x: n.position.x, y: n.position.y }));
+      return next;
+    });
 
     try {
       await api.patch(`/v1/networks/${selectedId}/layout`, { nodes: payload });
@@ -341,9 +535,53 @@ const serverInfo = useMemo(() => {
                 <span className={`bpDot ${props.serverOk ? "ok" : "bad"}`} />
                 <span>{props.serverOk ? "Сервер доступен" : "Сервер недоступен"}</span>
               </div>
+              <div style={{ height: 12 }} />
 
+              <div className="bpLabel">Устройства</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {(selected?.devices ?? []).map((d) => {
+                  const prog = deployMap[d.device.id || d.deviceId];
+
+                  return (
+                    <div key={d.deviceId} className="bpStat" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className={`bpDot ${d.device.online ? "ok" : "bad"}`} />
+                          <span style={{ fontWeight: 900 }}>
+                            {d.device.name || d.device.id.slice(0, 6)}
+                          </span>
+                        </div>
+                        <span className="bpMuted" style={{ marginTop: 0 }}>
+                          {d.device.platform} {d.device.model}
+                        </span>
+                      </div>
+
+                      {/* 👇 ВОТ СЮДА вставляется deploy статус */}
+                      {prog?.t === "DEPLOY_PROGRESS" ? (
+                        <div className="bpMuted" style={{ marginTop: 6 }}>
+                          deploy: {prog.stage} · {prog.progress}%
+                        </div>
+                      ) : null}
+
+                      {prog?.t === "DEPLOY_RESULT" ? (
+                        <div
+                          className="bpMuted"
+                          style={{
+                            marginTop: 6,
+                            color: prog.ok ? "#4ade80" : "#f87171",
+                          }}
+                        >
+                          {prog.ok ? "Deploy завершён ✅" : `Ошибка deploy ❌`}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {!selected?.devices?.length ? <div className="bpMuted">Устройств нет</div> : null}
+              </div>
               {msg ? <div className="bpToast" style={{ marginTop: 12 }}>{msg}</div> : null}
             </div>
+            
           </>
         )}
       </div>
@@ -366,7 +604,17 @@ const serverInfo = useMemo(() => {
               </div>
             </div>
           ) : (
-            <ReactFlow nodes={nodes} edges={edges} onNodeDragStop={onNodeDragStop} fitView>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeDragStop={onNodeDragStop}
+              fitView
+              fitViewOptions={{ padding: 0.2 }}
+              nodesDraggable={true}
+            >
               <Background gap={18} />
               <Controls showInteractive={false} />
             </ReactFlow>
@@ -582,7 +830,6 @@ const CSS = `
 .bpDot.ok{ background: rgba(34,197,94,0.75); }
 .bpDot.bad{ background: rgba(239,68,68,0.75); }
 
-/* ReactFlow tweaks */
 .react-flow__attribution{ display:none; }
 .react-flow{
   background: radial-gradient(1200px 700px at 40% 25%, rgba(125,211,252,0.10), transparent 55%),
@@ -601,5 +848,42 @@ const CSS = `
 }
 .react-flow__controls-button:hover{
   background: rgba(255,255,255,0.08);
+}
+.emoNode{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  color:#fff;
+  text-align:center;
+  user-select:none;
+  pointer-events:auto;
+}
+
+.emoIcon{
+  filter: drop-shadow(0 10px 18px rgba(0,0,0,0.55));
+  line-height: 1;
+}
+
+.emoLabel{
+  font-weight: 900;
+  font-size: 14px;
+  opacity: 0.92;
+  text-shadow: 0 8px 16px rgba(0,0,0,0.45);
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emoSub{
+  font-size: 11px;
+  opacity: 0.6;
+  text-shadow: 0 8px 16px rgba(0,0,0,0.35);
+}
+
+/* make selection look clean */
+.react-flow__node.selected .emoIcon{
+  filter: drop-shadow(0 0 14px rgba(125,211,252,0.35)) drop-shadow(0 10px 18px rgba(0,0,0,0.55));
 }
 `;
