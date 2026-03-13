@@ -17,6 +17,7 @@ import NodeEnding from "./editor/canvas/NodeEnding";
 import Inspector from "./editor/inspector/Inspector";
 import ConfirmDelete from "./editor/dialogs/ConfirmDelete";
 import ValidationReport from "./editor/dialogs/ValidationReport";
+import PreviewPlayMode from "./editor/dialogs/PreviewPlayMode";
 import { useEditorStore } from "./editor/store/editorStore";
 import { collectBundle, fromProject } from "./editor/file/projectIO";
 import { validateProject, type ValidationIssue } from "./editor/validation/validateProject";
@@ -232,6 +233,7 @@ export default function App() {
   const [miniOpen, setMiniOpen] = useState(true);
   const [validationOpen, setValidationOpen] = useState(false);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const runValidation = useCallback(() => {
     const issues = validateProject(nodes as any, edges);
@@ -491,7 +493,7 @@ const isValidConnection = useCallback(
     <LicenseGate>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
-          <TopBar onValidate={runValidation} />
+          <TopBar onValidate={runValidation} onPreview={() => setPreviewOpen(true)} />
 
           <div
             ref={wrapperRef}
@@ -561,6 +563,7 @@ const isValidConnection = useCallback(
 
           <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
           <ValidationReport open={validationOpen} issues={validationIssues} onClose={() => setValidationOpen(false)} />
+          <PreviewPlayMode open={previewOpen} nodes={nodes as any} edges={edges} onClose={() => setPreviewOpen(false)} />
         </div>
 
         <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
@@ -572,7 +575,7 @@ const isValidConnection = useCallback(
 
 }
 
-function TopBar(props: { onValidate: () => void }) {
+function TopBar(props: { onValidate: () => void; onPreview: () => void }) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -612,6 +615,7 @@ function TopBar(props: { onValidate: () => void }) {
       <button style={tbBtn} onClick={addEnding}>🏁 Концовка</button>
       <button style={tbBtn} onClick={requestDelete}>🗑️ Удалить (Del)</button>
       <button style={tbBtn} onClick={props.onValidate}>🧪 Проверить проект</button>
+      <button style={tbBtn} onClick={props.onPreview}>▶️ Превью</button>
       
 
       <div style={{ width: 10 }} />
