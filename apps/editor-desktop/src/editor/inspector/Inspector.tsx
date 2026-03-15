@@ -195,6 +195,7 @@ function MediaDropZone(props: {
       onDragOver={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
         setDragOver(true);
       }}
       onDragLeave={(e) => {

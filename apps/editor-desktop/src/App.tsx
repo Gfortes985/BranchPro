@@ -457,6 +457,22 @@ const isValidConnection = useCallback(
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [undo, redo, requestDelete, addQuestion, saveToFile, copySelection, pasteSelection]);
 
+  useEffect(() => {
+    const allowFileDnD = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      if (!Array.from(e.dataTransfer.types || []).includes("Files")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    };
+
+    window.addEventListener("dragover", allowFileDnD);
+    window.addEventListener("drop", allowFileDnD);
+    return () => {
+      window.removeEventListener("dragover", allowFileDnD);
+      window.removeEventListener("drop", allowFileDnD);
+    };
+  }, []);
+
 
   useEffect(() => {
   const off = window.branchpro.onMenuAction?.(async (action: string, token?: string) => {
