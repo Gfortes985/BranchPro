@@ -136,6 +136,8 @@ function QuestionView(props: { node: Node<NodeData>; edges: Edge[]; onSelect: (i
           );
         })}
       </div>
+
+      <MediaPreview mediaList={(data?.mediaList ?? []) as any[]} mediaIndex={Number(data?.mediaIndex ?? 0)} />
     </div>
   );
 }
@@ -149,9 +151,76 @@ function EndingView(props: { node: Node<NodeData>; onRestart: () => void }) {
       <div style={{ fontSize: 20, fontWeight: 900, marginTop: 6 }}>{data?.title ?? "Концовка"}</div>
       <div style={{ marginTop: 10, whiteSpace: "pre-wrap", opacity: 0.9 }}>{data?.resultText || "—"}</div>
 
+      <MediaPreview mediaList={(data?.mediaList ?? []) as any[]} mediaIndex={Number(data?.mediaIndex ?? 0)} />
+
       <button style={{ ...btn, marginTop: 16 }} onClick={props.onRestart}>🔁 Пройти заново</button>
     </div>
   );
+}
+
+function MediaPreview(props: { mediaList: Array<{ type: "image" | "video"; path: string }>; mediaIndex: number }) {
+  const mediaList = props.mediaList ?? [];
+  const initial = clamp(props.mediaIndex, 0, Math.max(0, mediaList.length - 1));
+  const [index, setIndex] = useState(initial);
+
+  useEffect(() => {
+    setIndex(initial);
+  }, [initial, mediaList.length]);
+
+  if (!mediaList.length) return null;
+
+  const current = mediaList[index];
+  if (!current) return null;
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Вложения</div>
+      <div style={mediaWrap}>
+        {current.type === "image" ? (
+          <img
+            src={window.branchpro.mediaUrl(current.path)}
+            alt="preview-media"
+            style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "cover" }}
+            loading="lazy"
+            draggable={false}
+          />
+        ) : (
+          <video
+            src={window.branchpro.mediaUrl(current.path)}
+            style={{ display: "block", width: "100%", maxHeight: 240 }}
+            controls
+            preload="metadata"
+          />
+        )}
+
+        {mediaList.length > 1 ? (
+          <>
+            <button style={{ ...navBtn, left: 8 }} onClick={() => setIndex((v) => (v - 1 + mediaList.length) % mediaList.length)}>
+              ◀
+            </button>
+            <button style={{ ...navBtn, right: 8 }} onClick={() => setIndex((v) => (v + 1) % mediaList.length)}>
+              ▶
+            </button>
+          </>
+        ) : null}
+
+        <div style={mediaBadge}>{index + 1}/{mediaList.length}</div>
+      </div>
+
+      <div style={{ marginTop: 6, opacity: 0.65, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={current.path}>
+        📎 {current.type}: {basename(current.path)}
+      </div>
+    </div>
+  );
+}
+
+function clamp(v: number, min: number, max: number) {
+  if (Number.isNaN(v)) return min;
+  return Math.max(min, Math.min(max, v));
+}
+
+function basename(p: string) {
+  return String(p).split(/[\\/]/).pop() ?? p;
 }
 
 const overlay: React.CSSProperties = {
@@ -198,6 +267,40 @@ const answerBtn: React.CSSProperties = {
   color: "#fff",
   padding: "10px 12px",
   cursor: "pointer"
+};
+
+const mediaWrap: React.CSSProperties = {
+  position: "relative",
+  border: "1px solid #2a2a2a",
+  borderRadius: 12,
+  background: "#0f0f0f",
+  overflow: "hidden"
+};
+
+const navBtn: React.CSSProperties = {
+  position: "absolute",
+  top: "50%",
+  transform: "translateY(-50%)",
+  width: 30,
+  height: 30,
+  borderRadius: 999,
+  border: "1px solid rgba(255,255,255,0.14)",
+  background: "rgba(0,0,0,0.35)",
+  color: "#fff",
+  cursor: "pointer",
+  display: "grid",
+  placeItems: "center"
+};
+
+const mediaBadge: React.CSSProperties = {
+  position: "absolute",
+  left: 8,
+  bottom: 8,
+  padding: "2px 8px",
+  borderRadius: 999,
+  background: "rgba(0,0,0,0.35)",
+  border: "1px solid rgba(255,255,255,0.14)",
+  fontSize: 12
 };
 
 const empty: React.CSSProperties = {
