@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { nanoid } from "nanoid";
 import { useEditorStore } from "../store/editorStore";
 import type { NodeData, Answer, MediaRef } from "../types";
@@ -36,11 +36,18 @@ export default function Inspector() {
     patchNode(node.id, { mediaList: list, mediaIndex: idx } as any);
   };
 
-  const addMedia = async (type: "image" | "video") => {
+  const addMediaByPath = (path: string, type?: "image" | "video") => {
+    const resolvedType = type ?? inferMediaType(path) ?? "image";
+    const next = [...mediaList, { type: resolvedType, path }];
+    setMedia(next, next.length - 1);
+  };
+
+  const addMedia = async () => {
     const p = await window.branchpro.pickMedia();
     if (!p) return;
-    const next = [...mediaList, { type, path: p }];
-    setMedia(next, next.length - 1);
+    const detected = inferMediaType(p);
+    if (!detected) return;
+    addMediaByPath(p, detected);
   };
 
   const deleteCurrentMedia = () => {
@@ -78,9 +85,10 @@ export default function Inspector() {
       <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
         <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Вложения</div>
 
+        <MediaDropZone onPickFallback={addMedia} onAddMedia={addMediaByPath} />
+
         <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-          <button style={btn} onClick={() => addMedia("image")}>🖼️ Добавить</button>
-          <button style={btn} onClick={() => addMedia("video")}>🎬 Добавить</button>
+          <button style={btn} onClick={addMedia}>➕ Добавить файл</button>
           <button
             style={{ ...btn, opacity: mediaList.length ? 1 : 0.45, cursor: mediaList.length ? "pointer" : "not-allowed" }}
             disabled={!mediaList.length}
@@ -110,6 +118,8 @@ export default function Inspector() {
                   style={{ ...inp, width: 90, marginTop: 0, padding: "6px 8px" }}
                 />
               </div>
+
+              {current ? <MediaMetaPreview media={current} /> : null}
             </>
           ) : (
             "Вложений нет"
@@ -121,6 +131,133 @@ export default function Inspector() {
       <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
         <button style={btnDanger} onClick={requestDelete}>🗑️ Удалить ноду (Del)</button>
       </div>
+    </div>
+  );
+}
+
+function MediaDropZone(props: {
+  onAddMedia: (path: string, type?: "image" | "video") => void;
+  onPickFallback: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const [hint, setHint] = useState<string>("");
+
+  const extractFilePath = (file: File): string | null => {
+    const anyFile = file as any;
+    if (typeof anyFile.path === "string" && anyFile.path.length > 0) return anyFile.path;
+    if (typeof anyFile.webkitRelativePath === "string" && anyFile.webkitRelativePath.length > 0) return anyFile.webkitRelativePath;
+    return null;
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+
+    const files: File[] = [];
+    const items = Array.from(e.dataTransfer.items ?? []);
+
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+
+    if (files.length === 0) {
+      files.push(...Array.from(e.dataTransfer.files ?? []));
+    }
+
+    let added = 0;
+    for (const file of files) {
+      const path = extractFilePath(file);
+      if (!path) continue;
+      const type = inferMediaType(path, file.type);
+      if (!type) continue;
+      props.onAddMedia(path, type);
+      added += 1;
+    }
+
+    if (added > 0) {
+      setHint(`Добавлено вложений: ${added}`);
+      return;
+    }
+
+    setHint("Drag&drop не смог прочитать путь файла. Нажми «Добавить файл».");
+  };
+
+  return (
+    <div
+      onDragEnter={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+      }}
+      onDrop={handleDrop}
+      style={{
+        marginTop: 10,
+        border: dragOver ? "1px solid #7dd3fc" : "1px dashed #2a2a2a",
+        borderRadius: 12,
+        padding: 10,
+        fontSize: 12,
+        opacity: 0.9,
+        background: dragOver ? "rgba(125, 211, 252, 0.12)" : "#101010"
+      }}
+    >
+      <div>Перетащи сюда image/video файл для быстрого добавления.</div>
+      <button style={{ ...btnSmall, marginTop: 8, marginLeft: 0 }} onClick={props.onPickFallback}>Добавить файл…</button>
+      {hint ? <div style={{ marginTop: 8, opacity: 0.7 }}>{hint}</div> : null}
+    </div>
+  );
+}
+
+function MediaMetaPreview({ media }: { media: MediaRef }) {
+  const [duration, setDuration] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    setDuration(null);
+    setLoadError(false);
+  }, [media.path, media.type]);
+
+  const src = window.branchpro.mediaUrl(media.path);
+
+  return (
+    <div style={{ marginTop: 10, border: "1px solid #222", borderRadius: 10, padding: 10, background: "#121212" }}>
+      <div style={{ fontSize: 12, opacity: 0.85 }}>Превью вложения</div>
+      {media.type === "image" ? (
+        <img
+          src={src}
+          alt={basename(media.path)}
+          onError={() => setLoadError(true)}
+          style={{ marginTop: 8, width: "100%", borderRadius: 8, maxHeight: 160, objectFit: "cover", background: "#0f0f0f" }}
+        />
+      ) : (
+        <video
+          src={src}
+          controls
+          preload="metadata"
+          onLoadedMetadata={(e) => setDuration((e.target as HTMLVideoElement).duration || null)}
+          onError={() => setLoadError(true)}
+          style={{ marginTop: 8, width: "100%", borderRadius: 8, maxHeight: 180, background: "#0f0f0f" }}
+        />
+      )}
+
+      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+        Тип: {media.type} · Файл: {basename(media.path)}
+        {duration != null ? ` · Длительность: ${formatDuration(duration)}` : ""}
+      </div>
+      {loadError ? <div style={{ marginTop: 6, color: "#fca5a5", fontSize: 12 }}>⚠️ Не удалось загрузить вложение.</div> : null}
     </div>
   );
 }
@@ -228,6 +365,25 @@ function EndingEditor(props: { nodeId: string; data: any; patchNode: any }) {
 function basename(p?: string | null) {
   if (!p) return "";
   return String(p).split(/[\\/]/).pop() ?? p;
+}
+
+function inferMediaType(path: string, mimeType?: string): "image" | "video" | null {
+  const normalized = (mimeType ?? "").toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+
+  const ext = path.split(".").pop()?.toLowerCase();
+  if (!ext) return null;
+  if (["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"].includes(ext)) return "image";
+  if (["mp4", "mov", "webm", "m4v", "avi", "mkv"].includes(ext)) return "video";
+  return null;
+}
+
+function formatDuration(seconds: number) {
+  const total = Math.max(0, Math.round(seconds));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
 const lbl: React.CSSProperties = { display: "block", marginTop: 12, fontSize: 12, opacity: 0.8 };
