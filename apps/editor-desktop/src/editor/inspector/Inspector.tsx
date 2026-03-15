@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { nanoid } from "nanoid";
 import { useEditorStore } from "../store/editorStore";
 import type { NodeData, Answer, MediaRef } from "../types";
@@ -42,10 +42,12 @@ export default function Inspector() {
     setMedia(next, next.length - 1);
   };
 
-  const addMedia = async (type: "image" | "video") => {
+  const addMedia = async () => {
     const p = await window.branchpro.pickMedia();
     if (!p) return;
-    addMediaByPath(p, type);
+    const detected = inferMediaType(p);
+    if (!detected) return;
+    addMediaByPath(p, detected);
   };
 
   const deleteCurrentMedia = () => {
@@ -83,11 +85,10 @@ export default function Inspector() {
       <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
         <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Вложения</div>
 
-        <MediaDropZone onPickFallback={() => addMedia("image")} onAddMedia={addMediaByPath} />
+        <MediaDropZone onPickFallback={addMedia} onAddMedia={addMediaByPath} />
 
         <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-          <button style={btn} onClick={() => addMedia("image")}>🖼️ Добавить</button>
-          <button style={btn} onClick={() => addMedia("video")}>🎬 Добавить</button>
+          <button style={btn} onClick={addMedia}>➕ Добавить файл</button>
           <button
             style={{ ...btn, opacity: mediaList.length ? 1 : 0.45, cursor: mediaList.length ? "pointer" : "not-allowed" }}
             disabled={!mediaList.length}
@@ -141,35 +142,67 @@ function MediaDropZone(props: {
   const [dragOver, setDragOver] = useState(false);
   const [hint, setHint] = useState<string>("");
 
+  const extractFilePath = (file: File): string | null => {
+    const anyFile = file as any;
+    if (typeof anyFile.path === "string" && anyFile.path.length > 0) return anyFile.path;
+    if (typeof anyFile.webkitRelativePath === "string" && anyFile.webkitRelativePath.length > 0) return anyFile.webkitRelativePath;
+    return null;
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+
+    const files: File[] = [];
+    const items = Array.from(e.dataTransfer.items ?? []);
+
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+
+    if (files.length === 0) {
+      files.push(...Array.from(e.dataTransfer.files ?? []));
+    }
+
+    let added = 0;
+    for (const file of files) {
+      const path = extractFilePath(file);
+      if (!path) continue;
+      const type = inferMediaType(path, file.type);
+      if (!type) continue;
+      props.onAddMedia(path, type);
+      added += 1;
+    }
+
+    if (added > 0) {
+      setHint(`Добавлено вложений: ${added}`);
+      return;
+    }
+
+    setHint("Drag&drop не смог прочитать путь файла. Нажми «Добавить файл».");
+  };
+
   return (
     <div
-      onDragOver={(e) => {
+      onDragEnter={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         setDragOver(true);
       }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
+      onDragOver={(e) => {
         e.preventDefault();
-        setDragOver(false);
-
-        const files = Array.from(e.dataTransfer.files ?? []);
-        let added = 0;
-        for (const file of files) {
-          const path = (file as any).path as string | undefined;
-          if (!path) continue;
-          const type = inferMediaType(path, file.type);
-          if (!type) continue;
-          props.onAddMedia(path, type);
-          added += 1;
-        }
-
-        if (added > 0) {
-          setHint(`Добавлено вложений: ${added}`);
-          return;
-        }
-
-        setHint("Не удалось прочитать путь файла в браузерном режиме. Используй кнопку Добавить.");
+        e.stopPropagation();
+        setDragOver(true);
       }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+      }}
+      onDrop={handleDrop}
       style={{
         marginTop: 10,
         border: dragOver ? "1px solid #7dd3fc" : "1px dashed #2a2a2a",
@@ -181,7 +214,7 @@ function MediaDropZone(props: {
       }}
     >
       <div>Перетащи сюда image/video файл для быстрого добавления.</div>
-      <button style={{ ...btnSmall, marginTop: 8, marginLeft: 0 }} onClick={props.onPickFallback}>Выбрать файл…</button>
+      <button style={{ ...btnSmall, marginTop: 8, marginLeft: 0 }} onClick={props.onPickFallback}>Добавить файл…</button>
       {hint ? <div style={{ marginTop: 8, opacity: 0.7 }}>{hint}</div> : null}
     </div>
   );
