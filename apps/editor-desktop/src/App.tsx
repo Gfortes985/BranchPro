@@ -235,6 +235,106 @@ export default function App() {
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  const runAutoLayout = useCallback(() => {
+    if (nodes.length === 0) return;
+
+    const outgoing = new Map<string, string[]>();
+    const incomingCount = new Map<string, number>();
+    for (const n of nodes) {
+      outgoing.set(n.id, []);
+      incomingCount.set(n.id, 0);
+    }
+
+    for (const e of edges) {
+      if (!outgoing.has(e.source) || !incomingCount.has(e.target)) continue;
+      outgoing.get(e.source)!.push(e.target);
+      incomingCount.set(e.target, (incomingCount.get(e.target) ?? 0) + 1);
+    }
+
+    const entryIds = nodes
+      .filter((n: any) => n.data?.kind === "question" && n.data?.isEntry)
+      .map((n) => n.id);
+
+    const roots = entryIds.length
+      ? entryIds
+      : nodes.filter((n) => (incomingCount.get(n.id) ?? 0) === 0).map((n) => n.id);
+
+    if (roots.length === 0 && nodes.length > 0) roots.push(nodes[0].id);
+
+    const levelById = new Map<string, number>();
+    const orderById = new Map<string, number>();
+    const queue: string[] = [];
+
+    roots.forEach((id, i) => {
+      levelById.set(id, 0);
+      orderById.set(id, i);
+      queue.push(id);
+    });
+
+    while (queue.length) {
+      const id = queue.shift()!;
+      const level = levelById.get(id) ?? 0;
+      const next = outgoing.get(id) ?? [];
+      for (const nextId of next) {
+        const candidate = level + 1;
+        const current = levelById.get(nextId);
+        if (current === undefined || candidate > current) {
+          levelById.set(nextId, candidate);
+        }
+        if (!orderById.has(nextId)) {
+          orderById.set(nextId, orderById.size);
+          queue.push(nextId);
+        }
+      }
+    }
+
+    nodes.forEach((n) => {
+      if (!levelById.has(n.id)) levelById.set(n.id, 0);
+      if (!orderById.has(n.id)) orderById.set(n.id, orderById.size);
+    });
+
+    const byLevel = new Map<number, string[]>();
+    for (const n of nodes) {
+      const lvl = levelById.get(n.id) ?? 0;
+      const arr = byLevel.get(lvl) ?? [];
+      arr.push(n.id);
+      byLevel.set(lvl, arr);
+    }
+
+    const X_STEP = 420;
+    const Y_STEP = 240;
+    const GRID = 20;
+
+    const toGrid = (v: number) => Math.round(v / GRID) * GRID;
+    const posById = new Map<string, { x: number; y: number }>();
+    const sortedLevels = [...byLevel.keys()].sort((a, b) => a - b);
+
+    for (const lvl of sortedLevels) {
+      const ids = byLevel.get(lvl) ?? [];
+      ids.sort((a, b) => (orderById.get(a) ?? 0) - (orderById.get(b) ?? 0));
+
+      const offsetY = -((ids.length - 1) * Y_STEP) / 2;
+      ids.forEach((id, i) => {
+        posById.set(id, {
+          x: toGrid(lvl * X_STEP),
+          y: toGrid(offsetY + i * Y_STEP)
+        });
+      });
+    }
+
+    markDirty();
+    setNodes(
+      nodes.map((n) => ({
+        ...n,
+        position: posById.get(n.id) ?? n.position
+      }))
+    );
+
+    window.setTimeout(() => {
+      rfRef.current?.fitView?.({ padding: 0.22, duration: 350 });
+    }, 0);
+  }, [nodes, edges, markDirty, setNodes]);
+
   const runValidation = useCallback(() => {
     const issues = validateProject(nodes as any, edges);
     setValidationIssues(issues);
@@ -493,7 +593,7 @@ const isValidConnection = useCallback(
     <LicenseGate>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
-          <TopBar onValidate={runValidation} onPreview={() => setPreviewOpen(true)} />
+          <TopBar onValidate={runValidation} onPreview={() => setPreviewOpen(true)} onAutoLayout={runAutoLayout} />
 
           <div
             ref={wrapperRef}
@@ -575,7 +675,7 @@ const isValidConnection = useCallback(
 
 }
 
-function TopBar(props: { onValidate: () => void; onPreview: () => void }) {
+function TopBar(props: { onValidate: () => void; onPreview: () => void; onAutoLayout: () => void }) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -616,6 +716,7 @@ function TopBar(props: { onValidate: () => void; onPreview: () => void }) {
       <button style={tbBtn} onClick={requestDelete}>🗑️ Удалить (Del)</button>
       <button style={tbBtn} onClick={props.onValidate}>🧪 Проверить проект</button>
       <button style={tbBtn} onClick={props.onPreview}>▶️ Превью</button>
+      <button style={tbBtn} onClick={props.onAutoLayout}>🧭 Авторасставить</button>
       
 
       <div style={{ width: 10 }} />
