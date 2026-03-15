@@ -16,8 +16,11 @@ import NodeQuestion from "./editor/canvas/NodeQuestion";
 import NodeEnding from "./editor/canvas/NodeEnding";
 import Inspector from "./editor/inspector/Inspector";
 import ConfirmDelete from "./editor/dialogs/ConfirmDelete";
+import ValidationReport from "./editor/dialogs/ValidationReport";
+import PreviewPlayMode from "./editor/dialogs/PreviewPlayMode";
 import { useEditorStore } from "./editor/store/editorStore";
 import { collectBundle, fromProject } from "./editor/file/projectIO";
+import { validateProject, type ValidationIssue } from "./editor/validation/validateProject";
 import type { Edge, Node } from "reactflow";
 import { nanoid } from "nanoid";
 import { LicenseGate } from "./auth/LicenseGate";
@@ -228,6 +231,15 @@ export default function App() {
   const isSelectingRef = useRef(false);
 
   const [miniOpen, setMiniOpen] = useState(true);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  const runValidation = useCallback(() => {
+    const issues = validateProject(nodes as any, edges);
+    setValidationIssues(issues);
+    setValidationOpen(true);
+  }, [nodes, edges]);
 
   const onNodesChange = useCallback(
   (changes: NodeChange[]) => {
@@ -481,7 +493,7 @@ const isValidConnection = useCallback(
     <LicenseGate>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
-          <TopBar />
+          <TopBar onValidate={runValidation} onPreview={() => setPreviewOpen(true)} />
 
           <div
             ref={wrapperRef}
@@ -550,6 +562,8 @@ const isValidConnection = useCallback(
           </div>
 
           <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
+          <ValidationReport open={validationOpen} issues={validationIssues} onClose={() => setValidationOpen(false)} />
+          <PreviewPlayMode open={previewOpen} nodes={nodes as any} edges={edges} onClose={() => setPreviewOpen(false)} />
         </div>
 
         <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
@@ -561,7 +575,7 @@ const isValidConnection = useCallback(
 
 }
 
-function TopBar() {
+function TopBar(props: { onValidate: () => void; onPreview: () => void }) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -600,6 +614,8 @@ function TopBar() {
       <button style={tbBtn} onClick={addQuestion}>➕ Вопрос (Ctrl+N)</button>
       <button style={tbBtn} onClick={addEnding}>🏁 Концовка</button>
       <button style={tbBtn} onClick={requestDelete}>🗑️ Удалить (Del)</button>
+      <button style={tbBtn} onClick={props.onValidate}>🧪 Проверить проект</button>
+      <button style={tbBtn} onClick={props.onPreview}>▶️ Превью</button>
       
 
       <div style={{ width: 10 }} />
@@ -1478,4 +1494,3 @@ if (typeof document !== "undefined" && !document.getElementById(accStyleId)) {
 function basename(p: string) {
   return String(p).split(/[\\/]/).pop() ?? p;
 }
-
