@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
 import { NetworksPage } from "./pages/NetworksPage";
@@ -16,22 +16,38 @@ type DeviceRow = {
   lastSeenAgeSec: number;
 };
 
-function normalizeUrl(u: string) {
-  let s = (u || "").trim();
-  if (!s) return "";
-  s = s.replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(s)) s = "http://" + s;
-  return s;
-}
+type ProjectVersion = {
+  id: string;
+  label: string;
+  createdAt?: string;
+};
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  versions: ProjectVersion[];
+};
+
+const FIXED_SERVER_HOST = "81.30.105.141";
+const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
 export default function App() {
-  
   const [page, setPage] = useState<Page>("dashboard");
 
-  const [serverUrl, setServerUrl] = useState(localStorage.getItem("bp_server_url") ?? "http://localhost:3000");
-  const baseUrl = useMemo(() => normalizeUrl(serverUrl), [serverUrl]);
+  const [authToken, setAuthToken] = useState(localStorage.getItem("bp_auth_token") ?? "");
+  const [authEmail, setAuthEmail] = useState(localStorage.getItem("bp_auth_email") ?? "");
+  const [authPassword, setAuthPassword] = useState("");
+  const [baseUrl, setBaseUrl] = useState<string>(BASE_URL_CANDIDATES[0]);
+  const [apiPrefix, setApiPrefix] = useState<"/v1" | "/api/v1">("/v1");
 
-  const api = useMemo(() => axios.create({ baseURL: baseUrl }), [baseUrl]);
+  const api = useMemo(
+    () =>
+      axios.create({
+        baseURL: baseUrl,
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      }),
+    [baseUrl, authToken]
+  );
 
   const isNetworks = page === "networks";
   const sidebarCollapsed = isNetworks;
@@ -45,34 +61,91 @@ export default function App() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [pairExpires, setPairExpires] = useState<number | null>(null);
+  const [deployVersionId, setDeployVersionId] = useState(localStorage.getItem("bp_deploy_version_id") ?? "");
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
 
-  const saveServerUrl = () => {
-    const fixed = normalizeUrl(serverUrl);
-    setServerUrl(fixed);
-    localStorage.setItem("bp_server_url", fixed);
-    setToast("✅ Server URL сохранён");
-    setServerOk(null);
+  const saveToken = () => {
+    const token = authToken.trim();
+    setAuthToken(token);
+    localStorage.setItem("bp_auth_token", token);
+    if (!token) {
+      setToast("Токен очищен");
+      return;
+    }
+    setToast("✅ API токен сохранён");
+  };
+
+  const handleLoginAndSaveToken = async () => {
+    if (!baseUrl) return;
+    setBusy(true);
+    setToast("");
+    try {
+      const { data } = await axios.post(`${baseUrl}/api/auth/login`, {
+        email: authEmail,
+        password: authPassword,
+      });
+      const token = String(data?.token ?? "").trim();
+      if (!token) throw new Error("Токен не получен");
+
+      setAuthToken(token);
+      localStorage.setItem("bp_auth_token", token);
+      localStorage.setItem("bp_auth_email", authEmail);
+      setToast("✅ Вход выполнен, токен сохранён");
+    } catch (e: any) {
+      setToast("❌ Ошибка входа: " + (e?.response?.data?.error ?? e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const checkServer = async () => {
     setBusy(true);
     setToast("");
     try {
-      const r = await api.get("/v1/health");
-      setServerOk(!!r.data?.ok || r.status === 200);
-    } catch (e: any) {
-      setServerOk(false);
-      setToast("❌ Сервер недоступен: " + (e?.message ?? String(e)));
+      let found = false;
+
+      for (const candidateBase of BASE_URL_CANDIDATES) {
+        for (const candidatePrefix of ["/v1", "/api/v1"] as const) {
+          try {
+            const r = await axios.get(`${candidateBase}${candidatePrefix}/health`, {
+              timeout: 7000,
+              validateStatus: () => true,
+            });
+            if (r.status >= 200 && r.status < 300) {
+              setBaseUrl(candidateBase);
+              setApiPrefix(candidatePrefix);
+              setServerOk(true);
+              setToast(`✅ Сервер доступен: ${candidateBase}${candidatePrefix}`);
+              found = true;
+              break;
+            }
+          } catch {
+            // пробуем следующий вариант
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        setServerOk(false);
+        setToast("❌ Сервер недоступен. Проверь HTTPS/HTTP, CORS и прокси до API.");
+      }
     } finally {
       setBusy(false);
     }
   };
 
+
+  useEffect(() => {
+    checkServer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadDevices = async () => {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.get<DeviceRow[]>("/v1/devices");
+      const { data } = await api.get<DeviceRow[]>(`${apiPrefix}/devices`);
       setDevices(data);
     } catch (e: any) {
       setToast("Ошибка загрузки устройств: " + (e?.message ?? String(e)));
@@ -85,7 +158,7 @@ export default function App() {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.post("/v1/pairing/start");
+      const { data } = await api.post(`${apiPrefix}/pairing/start`);
       setPairCode(data.code);
       setPairExpires(data.expiresInSec);
       setToast("Код создан ✅");
@@ -97,20 +170,58 @@ export default function App() {
   };
 
   const deploy = async (deviceId: string) => {
-    const versionId = prompt("versionId проекта (ProjectVersion.id)?");
-    if (!versionId) return;
+    const versionId = deployVersionId.trim();
+    if (!versionId) {
+      setToast("Укажи versionId перед deploy");
+      return;
+    }
 
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.post("/v1/deploy", {
+      const { data } = await api.post(`${apiPrefix}/deploy`, {
         deviceId,
         versionId,
-        baseUrl: api.defaults.baseURL, // позже уберём, сделаем PUBLIC_BASE_URL на сервере
+        baseUrl: api.defaults.baseURL,
       });
-      setToast(data.ok ? "DEPLOY отправлен ✅" : "Устройство оффлайн ❌");
+      setToast(data.ok ? `DEPLOY отправлен ✅ (versionId: ${versionId})` : "Устройство оффлайн ❌");
     } catch (e: any) {
       setToast("Ошибка deploy: " + (e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+
+  const normalizeProjects = (raw: any): ProjectRow[] => {
+    if (!Array.isArray(raw)) return [];
+
+    return raw.map((p: any, idx: number) => {
+      const versionsRaw = Array.isArray(p?.versions) ? p.versions : [];
+      const versions: ProjectVersion[] = versionsRaw.map((v: any, vIdx: number) => ({
+        id: String(v?.id ?? v?.versionId ?? `${idx}-${vIdx}`),
+        label: String(v?.name ?? v?.label ?? v?.version ?? v?.id ?? `Version ${vIdx + 1}`),
+        createdAt: v?.createdAt ?? v?.created_at,
+      }));
+
+      return {
+        id: String(p?.id ?? idx),
+        name: String(p?.name ?? p?.title ?? `Project ${idx + 1}`),
+        versions,
+      };
+    });
+  };
+
+  const loadProjects = async () => {
+    setBusy(true);
+    setToast("");
+    try {
+      const { data } = await api.get(`${apiPrefix}/projects`);
+      setProjects(normalizeProjects(data));
+      setToast("Проекты обновлены ✅");
+    } catch (e: any) {
+      setProjects([]);
+      setToast("Проекты пока недоступны на сервере: " + (e?.response?.status ?? e?.message ?? String(e)));
     } finally {
       setBusy(false);
     }
@@ -145,7 +256,7 @@ export default function App() {
             {serverOk === null ? "server: ?" : serverOk ? "server: ok" : "server: down"}
           </div>
           <div className="muted mono" title={baseUrl}>
-            {baseUrl || "no server"}
+            {`${baseUrl}${apiPrefix}` || "no server"}
           </div>
         </div>
       </aside>
@@ -168,11 +279,11 @@ export default function App() {
             </div>
             <div className="sub">
               {page === "networks"
-                ? "Сначала подключи сервер → потом создавай сети → добавляй устройства"
+                ? "Проверь сервер → потом создавай сети → добавляй устройства"
                 : page === "devices"
                 ? "Список устройств на сервере"
                 : page === "settings"
-                ? "Адрес сервера и проверка соединения"
+                ? "Фиксированный сервер и авторизация"
                 : " "}
             </div>
           </div>
@@ -180,7 +291,7 @@ export default function App() {
           <div className="row">
             {page !== "settings" ? (
               <button className="btn ghost" onClick={() => setPage("settings")}>
-                ⚙️ Настроить сервер
+                ⚙️ Настройки
               </button>
             ) : null}
           </div>
@@ -193,44 +304,92 @@ export default function App() {
                 Здесь будет обзор: активные сети, онлайн устройства, последние деплои и ошибки.
               </div>
               <div style={{ marginTop: 12 }} className="muted">
-                Начни с <b>Settings</b>: укажи сервер и нажми “Проверить”.
+                Начни с <b>Settings</b>: проверь соединение и выполни вход.
               </div>
             </Card>
           ) : null}
 
           {page === "settings" ? (
             <Card title="Сервер">
-              <div className="row" style={{ alignItems: "flex-end" }}>
-                <div style={{ flex: 1 }}>
-                  <div className="label">Server URL</div>
-                  <input
-                    className="inp"
-                    value={serverUrl}
-                    onChange={(e) => setServerUrl(e.target.value)}
-                    placeholder="http://localhost:3000"
-                  />
-                </div>
-                <button className="btn" onClick={saveServerUrl} disabled={busy}>
-                  Сохранить
-                </button>
-                <button className="btn ghost" onClick={checkServer} disabled={busy || !baseUrl}>
+              <div className="label">Server URL (фиксирован в приложении)</div>
+              <div className="muted mono" style={{ marginTop: 6 }}>{`${baseUrl}${apiPrefix}`}</div>
+
+              <div style={{ marginTop: 12 }}>
+                <button className="btn ghost" onClick={checkServer} disabled={busy}>
                   🔎 Проверить
                 </button>
               </div>
 
               <div style={{ marginTop: 12 }} className="muted">
-                Подсказка: для dev можешь использовать <span className="mono">http://localhost:3000</span>.
+                Хост зашит в код. Приложение само подбирает HTTPS/HTTP и префикс API.
+              </div>
+
+              <div style={{ height: 16 }} />
+
+              <div className="label">BranchProLicenseServer API token (Bearer)</div>
+              <div className="row" style={{ alignItems: "flex-end" }}>
+                <input
+                  className="inp"
+                  value={authToken}
+                  onChange={(e) => setAuthToken(e.target.value)}
+                  placeholder="Вставь токен или выполни вход ниже"
+                />
+                <button className="btn" onClick={saveToken} disabled={busy}>
+                  Сохранить токен
+                </button>
+              </div>
+
+              <div style={{ height: 12 }} />
+
+              <div className="label">Вход (получить токен автоматически)</div>
+              <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                <input
+                  className="inp"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="email"
+                  style={{ minWidth: 220 }}
+                />
+                <input
+                  className="inp"
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="password"
+                  style={{ minWidth: 200 }}
+                />
+                <button className="btn" onClick={handleLoginAndSaveToken} disabled={busy || !authEmail || !authPassword}>
+                  Войти и сохранить токен
+                </button>
+              </div>
+
+              <div style={{ marginTop: 10 }} className="muted">
+                Для BranchProLicenseServer защищённые endpoint'ы <span className="mono">/v1/*</span> требуют Bearer-токен.
               </div>
             </Card>
           ) : null}
 
           {page === "networks" ? (
-            <NetworksPage baseUrl={baseUrl} serverOk={!!serverOk} />
+            <NetworksPage baseUrl={baseUrl} apiPrefix={apiPrefix} serverOk={!!serverOk} authToken={authToken} />
           ) : null}
 
 
           {page === "devices" ? (
             <Card title="Устройства">
+              <div className="label">Project versionId для deploy</div>
+              <div className="row" style={{ marginBottom: 10 }}>
+                <input
+                  className="inp"
+                  value={deployVersionId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDeployVersionId(v);
+                    localStorage.setItem("bp_deploy_version_id", v);
+                  }}
+                  placeholder="Например: 42"
+                />
+              </div>
+
               <div className="row">
                 <button className="btn ghost" onClick={loadDevices} disabled={busy || !serverOk}>
                   ⟳ Обновить
@@ -273,7 +432,7 @@ export default function App() {
                       </span>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <button className="btn" disabled={busy || !d.online} onClick={() => deploy(d.id)}>
+                      <button className="btn" disabled={busy || !d.online || !deployVersionId.trim()} onClick={() => deploy(d.id)}>
                         Deploy
                       </button>
                     </div>
@@ -287,7 +446,47 @@ export default function App() {
 
           {page === "projects" ? (
             <Card title="Проекты">
-              <div className="muted">Следующий шаг: upload zip → список версий → deploy в сеть/устройства.</div>
+              <div className="row">
+                <button className="btn ghost" onClick={loadProjects} disabled={busy || !serverOk}>
+                  ⟳ Обновить проекты
+                </button>
+                <div className="muted">Выбери версию и нажми “Использовать для Deploy”.</div>
+              </div>
+
+              <div className="table" style={{ marginTop: 12 }}>
+                <div className="tr th" style={{ gridTemplateColumns: "1.3fr 1.3fr .8fr .8fr" }}>
+                  <div>Проект</div>
+                  <div>Версия</div>
+                  <div>Дата</div>
+                  <div></div>
+                </div>
+
+                {projects.flatMap((project) =>
+                  (project.versions.length ? project.versions : [{ id: "", label: "Нет версий", createdAt: "" }]).map((version) => (
+                    <div className="tr" key={`${project.id}:${version.id || "none"}`} style={{ gridTemplateColumns: "1.3fr 1.3fr .8fr .8fr" }}>
+                      <div>{project.name}</div>
+                      <div className="mono">{version.label} {version.id ? `(id: ${version.id})` : ""}</div>
+                      <div className="muted">{version.createdAt ? String(version.createdAt) : "—"}</div>
+                      <div style={{ textAlign: "right" }}>
+                        <button
+                          className="btn"
+                          disabled={busy || !version.id}
+                          onClick={() => {
+                            setDeployVersionId(version.id);
+                            localStorage.setItem("bp_deploy_version_id", version.id);
+                            setPage("devices");
+                            setToast(`Выбрана версия ${version.id} для deploy ✅`);
+                          }}
+                        >
+                          Использовать для Deploy
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {!projects.length ? <div className="muted" style={{ marginTop: 10 }}>Нажми “Обновить проекты”, чтобы загрузить список</div> : null}
+              </div>
             </Card>
           ) : null}
 
