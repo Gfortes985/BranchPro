@@ -7,6 +7,7 @@ export default function Inspector() {
   const nodes = useEditorStore((s) => s.nodes);
   const selected = useEditorStore((s) => s.selectedNodeIds);
   const patchNode = useEditorStore((s) => s.patchNode);
+  const mapNodesData = useEditorStore((s) => (s as any).mapNodesData);
   const requestDelete = useEditorStore((s) => s.requestDelete);
   const setEntryNode = useEditorStore((s) => (s as any).setEntryNode);
 
@@ -18,13 +19,12 @@ export default function Inspector() {
 
   const data = node?.data as NodeData | undefined;
 
+  if (selected.length > 1) {
+    return <BulkEditor selectedIds={selected} mapNodesData={mapNodesData} requestDelete={requestDelete} />;
+  }
+
   if (!node || !data) {
-    return (
-      <div style={{ padding: 14, color: "#cfcfcf", opacity: 0.85 }}>
-        <div style={{ fontWeight: 900 }}>Inspector</div>
-        <div style={{ marginTop: 10 }}>Выдели 1 ноду, чтобы редактировать ✍️</div>
-      </div>
-    );
+    return null;
   }
 
   // общие поля для вложений (для обоих типов)
@@ -130,6 +130,60 @@ export default function Inspector() {
       {/* Опасные действия */}
       <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
         <button style={btnDanger} onClick={requestDelete}>🗑️ Удалить ноду (Del)</button>
+      </div>
+    </div>
+  );
+}
+
+function BulkEditor(props: {
+  selectedIds: string[];
+  mapNodesData: (ids: string[], mapper: (data: NodeData) => NodeData) => void;
+  requestDelete: () => void;
+}) {
+  const [prefix, setPrefix] = useState("");
+  const [suffix, setSuffix] = useState("");
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+
+  const applyPrefixSuffix = () => {
+    if (!prefix && !suffix) return;
+    props.mapNodesData(props.selectedIds, (data: any) => ({
+      ...data,
+      title: `${prefix}${String(data?.title ?? "")}${suffix}`
+    }));
+  };
+
+  const applyFindReplace = () => {
+    if (!findText) return;
+    props.mapNodesData(props.selectedIds, (data: any) => ({
+      ...data,
+      title: String(data?.title ?? "").split(findText).join(replaceText)
+    }));
+  };
+
+  return (
+    <div style={{ padding: 14, color: "#fff" }}>
+      <div style={{ fontWeight: 900, fontSize: 14 }}>Массовое редактирование</div>
+      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Выбрано нод: {props.selectedIds.length}</div>
+
+      <label style={lbl}>Префикс заголовка</label>
+      <input value={prefix} onChange={(e) => setPrefix(e.target.value)} style={inp} placeholder="Например: [NEW] " />
+
+      <label style={lbl}>Суффикс заголовка</label>
+      <input value={suffix} onChange={(e) => setSuffix(e.target.value)} style={inp} placeholder="Например: (v2)" />
+
+      <button style={{ ...btn, marginTop: 10 }} onClick={applyPrefixSuffix}>Применить префикс/суффикс</button>
+
+      <label style={lbl}>Найти в заголовке</label>
+      <input value={findText} onChange={(e) => setFindText(e.target.value)} style={inp} placeholder="Что заменить" />
+
+      <label style={lbl}>Заменить на</label>
+      <input value={replaceText} onChange={(e) => setReplaceText(e.target.value)} style={inp} placeholder="Новый текст" />
+
+      <button style={{ ...btn, marginTop: 10 }} onClick={applyFindReplace}>Массовая замена в заголовках</button>
+
+      <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
+        <button style={btnDanger} onClick={props.requestDelete}>🗑️ Удалить выбранные ноды (Del)</button>
       </div>
     </div>
   );

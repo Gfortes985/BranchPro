@@ -120,6 +120,7 @@ export default function App() {
   const cancelDelete = useEditorStore((s) => s.cancelDelete);
 
   const setSelection = useEditorStore((s) => s.setSelection);
+  const selectedNodeIds = useEditorStore((s) => s.selectedNodeIds);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const rfRef = useRef<any>(null);
@@ -691,7 +692,14 @@ const isValidConnection = useCallback(
 
     return (
     <LicenseGate>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: selectedNodeIds.length ? "1fr 360px" : "1fr 0px",
+          height: "100vh",
+          overflow: "hidden"
+        }}
+      >
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
           <TopBar
             onValidate={runValidation}
@@ -796,9 +804,11 @@ const isValidConnection = useCallback(
           />
         </div>
 
-        <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
-          <Inspector />
-        </div>
+        {selectedNodeIds.length ? (
+          <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
+            <Inspector />
+          </div>
+        ) : null}
       </div>
     </LicenseGate>
   );
