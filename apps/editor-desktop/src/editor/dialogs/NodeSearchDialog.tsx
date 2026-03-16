@@ -20,8 +20,10 @@ export default function NodeSearchDialog(props: Props) {
         const kind = (n.data as any)?.kind as "question" | "ending" | undefined;
         if (typeFilter !== "all" && kind !== typeFilter) return false;
         const title = String((n.data as any)?.title ?? "").toLowerCase();
+        const tags = ((n.data as any)?.tags ?? []) as string[];
+        const tagsText = tags.join(" ").toLowerCase();
         if (!q) return true;
-        return title.includes(q) || n.id.toLowerCase().includes(q);
+        return title.includes(q) || n.id.toLowerCase().includes(q) || tagsText.includes(q);
       })
       .slice(0, 200);
   }, [props.nodes, query, typeFilter]);
@@ -58,6 +60,7 @@ export default function NodeSearchDialog(props: Props) {
             items.map((n) => {
               const kind = (n.data as any)?.kind ?? "?";
               const title = String((n.data as any)?.title ?? "Без названия");
+              const tags = ((n.data as any)?.tags ?? []) as string[];
               return (
                 <button
                   key={n.id}
@@ -69,6 +72,7 @@ export default function NodeSearchDialog(props: Props) {
                 >
                   <div style={{ fontWeight: 700 }}>{title}</div>
                   <div style={{ fontSize: 12, opacity: 0.75 }}>{kind} · {n.id}</div>
+                  {tags.length ? <div style={{ fontSize: 12, opacity: 0.8 }}>Теги: {tags.join(", ")}</div> : null}
                 </button>
               );
             })

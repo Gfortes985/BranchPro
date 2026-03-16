@@ -88,7 +88,6 @@ export default function Inspector() {
         <MediaDropZone onPickFallback={addMedia} onAddMedia={addMediaByPath} />
 
         <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-          <button style={btn} onClick={addMedia}>➕ Добавить файл</button>
           <button
             style={{ ...btn, opacity: mediaList.length ? 1 : 0.45, cursor: mediaList.length ? "pointer" : "not-allowed" }}
             disabled={!mediaList.length}
@@ -140,17 +139,29 @@ function BulkEditor(props: {
   mapNodesData: (ids: string[], mapper: (data: NodeData) => NodeData) => void;
   requestDelete: () => void;
 }) {
-  const [prefix, setPrefix] = useState("");
-  const [suffix, setSuffix] = useState("");
+  const [tagToAdd, setTagToAdd] = useState("");
+  const [tagToRemove, setTagToRemove] = useState("");
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
 
-  const applyPrefixSuffix = () => {
-    if (!prefix && !suffix) return;
+  const applyAddTag = () => {
+    const tag = tagToAdd.trim();
+    if (!tag) return;
     props.mapNodesData(props.selectedIds, (data: any) => ({
       ...data,
-      title: `${prefix}${String(data?.title ?? "")}${suffix}`
+      tags: Array.from(new Set([...(Array.isArray(data?.tags) ? data.tags : []), tag]))
     }));
+    setTagToAdd("");
+  };
+
+  const applyRemoveTag = () => {
+    const tag = tagToRemove.trim();
+    if (!tag) return;
+    props.mapNodesData(props.selectedIds, (data: any) => ({
+      ...data,
+      tags: (Array.isArray(data?.tags) ? data.tags : []).filter((t: string) => t !== tag)
+    }));
+    setTagToRemove("");
   };
 
   const applyFindReplace = () => {
@@ -166,13 +177,13 @@ function BulkEditor(props: {
       <div style={{ fontWeight: 900, fontSize: 14 }}>Массовое редактирование</div>
       <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Выбрано нод: {props.selectedIds.length}</div>
 
-      <label style={lbl}>Префикс заголовка</label>
-      <input value={prefix} onChange={(e) => setPrefix(e.target.value)} style={inp} placeholder="Например: [NEW] " />
+      <label style={lbl}>Добавить тег всем выбранным</label>
+      <input value={tagToAdd} onChange={(e) => setTagToAdd(e.target.value)} style={inp} placeholder="Например: chapter-1" />
+      <button style={{ ...btn, marginTop: 10 }} onClick={applyAddTag}>Добавить тег</button>
 
-      <label style={lbl}>Суффикс заголовка</label>
-      <input value={suffix} onChange={(e) => setSuffix(e.target.value)} style={inp} placeholder="Например: (v2)" />
-
-      <button style={{ ...btn, marginTop: 10 }} onClick={applyPrefixSuffix}>Применить префикс/суффикс</button>
+      <label style={lbl}>Удалить тег у всех выбранных</label>
+      <input value={tagToRemove} onChange={(e) => setTagToRemove(e.target.value)} style={inp} placeholder="Тег для удаления" />
+      <button style={{ ...btn, marginTop: 10 }} onClick={applyRemoveTag}>Удалить тег</button>
 
       <label style={lbl}>Найти в заголовке</label>
       <input value={findText} onChange={(e) => setFindText(e.target.value)} style={inp} placeholder="Что заменить" />
