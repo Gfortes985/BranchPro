@@ -2,7 +2,7 @@ const { app, BrowserWindow } = require("electron");
 const path = require("path");
 
 
-const isDev = !app.isPackaged;
+const isDev = !app.isPackaged; // in dev we relax webSecurity to avoid CORS issues when targeting remote fixed API
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -13,6 +13,8 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: !isDev,
+      allowRunningInsecureContent: false,
     },
   });
 
