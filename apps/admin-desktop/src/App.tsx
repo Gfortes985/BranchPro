@@ -56,6 +56,7 @@ export default function App() {
   const [serverOk, setServerOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [authExpired, setAuthExpired] = useState(false);
 
   // devices state
   const [devices, setDevices] = useState<DeviceRow[]>([]);
@@ -72,7 +73,17 @@ export default function App() {
       setToast("Токен очищен");
       return;
     }
+    setAuthExpired(false);
     setToast("✅ API токен сохранён");
+  };
+
+
+  const handleUnauthorized = (message?: string) => {
+    setAuthExpired(true);
+    setAuthToken("");
+    localStorage.removeItem("bp_auth_token");
+    setPage("settings");
+    setToast(message ?? "Сессия истекла (401). Выполни вход заново.");
   };
 
   const handleLoginAndSaveToken = async () => {
@@ -90,6 +101,7 @@ export default function App() {
       setAuthToken(token);
       localStorage.setItem("bp_auth_token", token);
       localStorage.setItem("bp_auth_email", authEmail);
+      setAuthExpired(false);
       setToast("✅ Вход выполнен, токен сохранён");
     } catch (e: any) {
       setToast("❌ Ошибка входа: " + (e?.response?.data?.error ?? e?.message ?? String(e)));
@@ -140,6 +152,20 @@ export default function App() {
     checkServer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        if (err?.response?.status === 401) {
+          handleUnauthorized();
+        }
+        return Promise.reject(err);
+      }
+    );
+    return () => api.interceptors.response.eject(id);
+  }, [api]);
 
   const loadDevices = async () => {
     setBusy(true);
@@ -298,6 +324,7 @@ export default function App() {
         </header>
 
         <div className="content">
+
           {page === "dashboard" ? (
             <Card title="Добро пожаловать">
               <div className="muted">
@@ -327,6 +354,11 @@ export default function App() {
               <div style={{ height: 16 }} />
 
               <div className="label">BranchProLicenseServer API token (Bearer)</div>
+              {authExpired ? (
+                <div className="muted" style={{ marginTop: 0, marginBottom: 8, color: "#fca5a5" }}>
+                  🔐 Сессия истекла. Войди заново.
+                </div>
+              ) : null}
               <div className="row" style={{ alignItems: "flex-end" }}>
                 <input
                   className="inp"
@@ -370,7 +402,13 @@ export default function App() {
           ) : null}
 
           {page === "networks" ? (
-            <NetworksPage baseUrl={baseUrl} apiPrefix={apiPrefix} serverOk={!!serverOk} authToken={authToken} />
+            <NetworksPage
+              baseUrl={baseUrl}
+              apiPrefix={apiPrefix}
+              serverOk={!!serverOk}
+              authToken={authToken}
+              onAuthExpired={handleUnauthorized}
+            />
           ) : null}
 
 

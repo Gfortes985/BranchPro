@@ -97,7 +97,7 @@ function defaultPos(i: number, n: number) {
   };
 }
 
-export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/v1"; serverOk: boolean; authToken?: string }) {
+export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/v1"; serverOk: boolean; authToken?: string; onAuthExpired?: (message?: string) => void }) {
   const api = useMemo(
     () =>
       axios.create({
@@ -137,6 +137,19 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
   const [adminSocket, setAdminSocket] = useState<Socket | null>(null);
   const [socketAvailable, setSocketAvailable] = useState<boolean | null>(null);
   const [networkCrudSupported, setNetworkCrudSupported] = useState(true);
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        if (err?.response?.status === 401) {
+          props.onAuthExpired?.("Сессия истекла во вкладке Networks (401). Выполни вход заново.");
+        }
+        return Promise.reject(err);
+      }
+    );
+    return () => api.interceptors.response.eject(id);
+  }, [api, props.onAuthExpired]);
+
 
   const load = async () => {
     if (!props.serverOk) return;
