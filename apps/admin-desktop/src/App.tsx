@@ -85,7 +85,8 @@ export default function App() {
     }
   };
 
-  const checkServer = async () => {
+  const loginAndSaveToken = async () => {
+    if (!baseUrl) return;
     setBusy(true);
     setToast("");
     try {
