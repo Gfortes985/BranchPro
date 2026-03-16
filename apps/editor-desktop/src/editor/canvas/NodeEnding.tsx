@@ -12,6 +12,7 @@ export default function NodeEnding({ id, data, selected }: NodeProps<NodeData>) 
   const mediaIndexRaw = ((data as any).mediaIndex ?? 0) as number;
   const mediaIndex = clamp(mediaIndexRaw, 0, Math.max(0, mediaList.length - 1));
   const current = mediaList.length ? mediaList[mediaIndex] : null;
+  const tags: string[] = ((data as any).tags ?? []) as string[];
 
   const goto = (delta: number) => {
     if (mediaList.length <= 1) return;
@@ -34,7 +35,14 @@ export default function NodeEnding({ id, data, selected }: NodeProps<NodeData>) 
       {/* только вход */}
       <Handle type="target" position={Position.Left} style={handleStyle} />
 
-      <div style={{ fontSize: 12, opacity: 0.7 }}>ENDING</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>ENDING</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {tags.map((tag) => (
+            <div key={tag} style={tagBadgeStyle}>#{tag}</div>
+          ))}
+        </div>
+      </div>
       <div style={{ fontSize: 16, fontWeight: 900, marginTop: 6 }}>{title}</div>
 
       <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>Решение</div>
@@ -168,4 +176,13 @@ const counterBadge: React.CSSProperties = {
   color: "#fff",
   fontSize: 12,
   opacity: 0.9
+};
+
+const tagBadgeStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 8px",
+  borderRadius: 999,
+  background: "rgba(59,130,246,0.15)",
+  border: "1px solid rgba(59,130,246,0.35)",
+  color: "#60a5fa"
 };
