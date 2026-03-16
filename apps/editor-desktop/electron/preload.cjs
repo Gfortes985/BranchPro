@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 console.log("[preload] loaded ✅");
 
 contextBridge.exposeInMainWorld("branchpro", {
@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld("branchpro", {
   reportSaveResult: (token, ok, path) =>
     ipcRenderer.send("project:saveResult", { token, ok: !!ok, path: path ?? null }),
   getPendingOpenFile: () => ipcRenderer.invoke("project:getPendingOpenFile"),
+  getPathForFile: (file) => {
+    try {
+      return webUtils?.getPathForFile?.(file) ?? null;
+    } catch {
+      return null;
+    }
+  },
 });
 
 // 🔐 отдельный namespace для auth, чтобы не мешать старому API
