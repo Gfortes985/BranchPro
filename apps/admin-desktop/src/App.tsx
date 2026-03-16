@@ -16,6 +16,18 @@ type DeviceRow = {
   lastSeenAgeSec: number;
 };
 
+type ProjectVersion = {
+  id: string;
+  label: string;
+  createdAt?: string;
+};
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  versions: ProjectVersion[];
+};
+
 const FIXED_SERVER_HOST = "81.30.105.141";
 const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
@@ -50,6 +62,7 @@ export default function App() {
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [pairExpires, setPairExpires] = useState<number | null>(null);
   const [deployVersionId, setDeployVersionId] = useState(localStorage.getItem("bp_deploy_version_id") ?? "");
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
 
   const saveToken = () => {
     const token = authToken.trim();
@@ -62,7 +75,7 @@ export default function App() {
     setToast("✅ API токен сохранён");
   };
 
-  const loginAndSaveToken = async () => {
+  const handleLoginAndSaveToken = async () => {
     if (!baseUrl) return;
     setBusy(true);
     setToast("");
@@ -175,6 +188,41 @@ export default function App() {
       setToast(data.ok ? `DEPLOY отправлен ✅ (versionId: ${versionId})` : "Устройство оффлайн ❌");
     } catch (e: any) {
       setToast("Ошибка deploy: " + (e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+
+  const normalizeProjects = (raw: any): ProjectRow[] => {
+    if (!Array.isArray(raw)) return [];
+
+    return raw.map((p: any, idx: number) => {
+      const versionsRaw = Array.isArray(p?.versions) ? p.versions : [];
+      const versions: ProjectVersion[] = versionsRaw.map((v: any, vIdx: number) => ({
+        id: String(v?.id ?? v?.versionId ?? `${idx}-${vIdx}`),
+        label: String(v?.name ?? v?.label ?? v?.version ?? v?.id ?? `Version ${vIdx + 1}`),
+        createdAt: v?.createdAt ?? v?.created_at,
+      }));
+
+      return {
+        id: String(p?.id ?? idx),
+        name: String(p?.name ?? p?.title ?? `Project ${idx + 1}`),
+        versions,
+      };
+    });
+  };
+
+  const loadProjects = async () => {
+    setBusy(true);
+    setToast("");
+    try {
+      const { data } = await api.get(`${apiPrefix}/projects`);
+      setProjects(normalizeProjects(data));
+      setToast("Проекты обновлены ✅");
+    } catch (e: any) {
+      setProjects([]);
+      setToast("Проекты пока недоступны на сервере: " + (e?.response?.status ?? e?.message ?? String(e)));
     } finally {
       setBusy(false);
     }
@@ -311,7 +359,7 @@ export default function App() {
                   placeholder="password"
                   style={{ minWidth: 200 }}
                 />
-                <button className="btn" onClick={loginAndSaveToken} disabled={busy || !authEmail || !authPassword}>
+                <button className="btn" onClick={handleLoginAndSaveToken} disabled={busy || !authEmail || !authPassword}>
                   Войти и сохранить токен
                 </button>
               </div>
@@ -399,7 +447,47 @@ export default function App() {
 
           {page === "projects" ? (
             <Card title="Проекты">
-              <div className="muted">Deploy по устройствам уже работает через поле versionId на странице Devices.</div>
+              <div className="row">
+                <button className="btn ghost" onClick={loadProjects} disabled={busy || !serverOk}>
+                  ⟳ Обновить проекты
+                </button>
+                <div className="muted">Выбери версию и нажми “Использовать для Deploy”.</div>
+              </div>
+
+              <div className="table" style={{ marginTop: 12 }}>
+                <div className="tr th" style={{ gridTemplateColumns: "1.3fr 1.3fr .8fr .8fr" }}>
+                  <div>Проект</div>
+                  <div>Версия</div>
+                  <div>Дата</div>
+                  <div></div>
+                </div>
+
+                {projects.flatMap((project) =>
+                  (project.versions.length ? project.versions : [{ id: "", label: "Нет версий", createdAt: "" }]).map((version) => (
+                    <div className="tr" key={`${project.id}:${version.id || "none"}`} style={{ gridTemplateColumns: "1.3fr 1.3fr .8fr .8fr" }}>
+                      <div>{project.name}</div>
+                      <div className="mono">{version.label} {version.id ? `(id: ${version.id})` : ""}</div>
+                      <div className="muted">{version.createdAt ? String(version.createdAt) : "—"}</div>
+                      <div style={{ textAlign: "right" }}>
+                        <button
+                          className="btn"
+                          disabled={busy || !version.id}
+                          onClick={() => {
+                            setDeployVersionId(version.id);
+                            localStorage.setItem("bp_deploy_version_id", version.id);
+                            setPage("devices");
+                            setToast(`Выбрана версия ${version.id} для deploy ✅`);
+                          }}
+                        >
+                          Использовать для Deploy
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {!projects.length ? <div className="muted" style={{ marginTop: 10 }}>Нажми “Обновить проекты”, чтобы загрузить список</div> : null}
+              </div>
             </Card>
           ) : null}
 
