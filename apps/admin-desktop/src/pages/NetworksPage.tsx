@@ -97,8 +97,15 @@ function defaultPos(i: number, n: number) {
   };
 }
 
-export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
-  const api = useMemo(() => axios.create({ baseURL: props.baseUrl }), [props.baseUrl]);
+export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authToken?: string }) {
+  const api = useMemo(
+    () =>
+      axios.create({
+        baseURL: props.baseUrl,
+        headers: props.authToken ? { Authorization: `Bearer ${props.authToken}` } : undefined,
+      }),
+    [props.baseUrl, props.authToken]
+  );
 
   const [deployMap, setDeployMap] = useState<Record<string, any>>({});
 
