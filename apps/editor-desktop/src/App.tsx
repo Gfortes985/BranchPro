@@ -382,25 +382,69 @@ export default function App() {
       byLevel.set(lvl, arr);
     }
 
-    const X_STEP = 420;
-    const Y_STEP = 240;
+    const X_GAP = 140;
+    const Y_GAP = 70;
     const GRID = 20;
 
     const toGrid = (v: number) => Math.round(v / GRID) * GRID;
     const posById = new Map<string, { x: number; y: number }>();
     const sortedLevels = [...byLevel.keys()].sort((a, b) => a - b);
 
+    const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
+    const getNodeSize = (id: string) => {
+      const n: any = nodeById.get(id);
+      const explicitW = Number(n?.width ?? 0);
+      const explicitH = Number(n?.height ?? 0);
+      if (explicitW > 0 && explicitH > 0) return { w: explicitW, h: explicitH };
+
+      const kind = n?.data?.kind;
+      const answersCount = Array.isArray(n?.data?.answers) ? n.data.answers.length : 0;
+      const hasMedia = Array.isArray(n?.data?.mediaList) && n.data.mediaList.length > 0;
+      const textLen = String(n?.data?.resultText ?? "").length;
+
+      if (kind === "question") {
+        return {
+          w: 320,
+          h: 160 + answersCount * 52 + (hasMedia ? 170 : 0)
+        };
+      }
+
+      if (kind === "ending") {
+        return {
+          w: 340,
+          h: 180 + Math.min(180, Math.ceil(textLen / 90) * 26) + (hasMedia ? 180 : 0)
+        };
+      }
+
+      return { w: 320, h: 220 };
+    };
+
+    const levelWidth = new Map<number, number>();
+    for (const lvl of sortedLevels) {
+      const ids = byLevel.get(lvl) ?? [];
+      const w = ids.reduce((acc, id) => Math.max(acc, getNodeSize(id).w), 320);
+      levelWidth.set(lvl, w);
+    }
+
+    let xCursor = 0;
+
     for (const lvl of sortedLevels) {
       const ids = byLevel.get(lvl) ?? [];
       ids.sort((a, b) => (orderById.get(a) ?? 0) - (orderById.get(b) ?? 0));
 
-      const offsetY = -((ids.length - 1) * Y_STEP) / 2;
-      ids.forEach((id, i) => {
+      const totalHeight = ids.reduce((sum, id) => sum + getNodeSize(id).h, 0) + Math.max(0, ids.length - 1) * Y_GAP;
+      let yCursor = -totalHeight / 2;
+
+      ids.forEach((id) => {
+        const size = getNodeSize(id);
         posById.set(id, {
-          x: toGrid(lvl * X_STEP),
-          y: toGrid(offsetY + i * Y_STEP)
+          x: toGrid(xCursor),
+          y: toGrid(yCursor)
         });
+        yCursor += size.h + Y_GAP;
       });
+
+      xCursor += (levelWidth.get(lvl) ?? 320) + X_GAP;
     }
 
     markDirty();
