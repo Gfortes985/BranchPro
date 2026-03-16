@@ -43,6 +43,8 @@ type S = {
   cancelDelete: () => void;
 
   patchNode: (id: string, patch: Partial<NodeData>) => void;
+  patchNodes: (ids: string[], patch: Partial<NodeData>) => void;
+  mapNodesData: (ids: string[], mapper: (data: NodeData) => NodeData) => void;
 
   resetHistory: () => void;
   replaceAll: (nodes: Node<NodeData>[], edges: Edge[]) => void;
@@ -72,6 +74,15 @@ function snap(nodes: Node<NodeData>[], edges: Edge[], selectedNodeIds: string[],
     selectedNodeIds: structuredClone(selectedNodeIds),
     selectedEdgeIds: structuredClone(selectedEdgeIds)
   };
+}
+
+function sameArray(a: string[], b: string[]) {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 
@@ -206,6 +217,10 @@ export const useEditorStore = create<S>()(
     },
 
     setSelection(nodeIds, edgeIds) {
+      const cur = get();
+      if (sameArray(cur.selectedNodeIds, nodeIds) && sameArray(cur.selectedEdgeIds, edgeIds)) {
+        return;
+      }
       set({ selectedNodeIds: nodeIds, selectedEdgeIds: edgeIds });
     },
 
@@ -310,6 +325,36 @@ export const useEditorStore = create<S>()(
         s.isDirty = true;
         (window as any).branchpro?.setDirty?.(true);
 
+      });
+    },
+
+    patchNodes(ids, patch) {
+      const idSet = new Set(ids);
+      if (idSet.size === 0) return;
+
+      get().pushHistory();
+      set((s) => {
+        for (const n of s.nodes) {
+          if (!idSet.has(n.id)) continue;
+          n.data = { ...(n.data as any), ...(patch as any) };
+        }
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+      });
+    },
+
+    mapNodesData(ids, mapper) {
+      const idSet = new Set(ids);
+      if (idSet.size === 0) return;
+
+      get().pushHistory();
+      set((s) => {
+        for (const n of s.nodes) {
+          if (!idSet.has(n.id)) continue;
+          n.data = mapper(n.data as any) as any;
+        }
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
       });
     },
     resetHistory() {

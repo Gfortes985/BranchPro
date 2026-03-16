@@ -13,6 +13,7 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
   const mediaIndex = clamp(mediaIndexRaw, 0, Math.max(0, mediaList.length - 1));
   const current = mediaList.length ? mediaList[mediaIndex] : null;
   const isEntry = Boolean((data as any).isEntry);
+  const tags: string[] = ((data as any).tags ?? []) as string[];
   const setEntryNode = useEditorStore((s) => (s as any).setEntryNode);
 
 
@@ -42,13 +43,18 @@ export default function NodeQuestion({ id, data, selected }: NodeProps<NodeData>
       {/* вход */}
       <Handle type="target" position={Position.Left} style={handleStyle} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
       <div style={{ fontSize: 12, opacity: 0.7 }}>QUESTION</div>
-      {isEntry ? (
-        <div style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)", color: "#22c55e" }}>
-        START
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        {tags.map((tag) => (
+          <div key={tag} style={tagBadgeStyle}>#{tag}</div>
+        ))}
+        {isEntry ? (
+          <div style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)", color: "#22c55e" }}>
+          START
+        </div>
+        ) : null}
       </div>
-      ) : null}
       </div>
 
 
@@ -235,4 +241,13 @@ const counterBadge: React.CSSProperties = {
   color: "#fff",
   fontSize: 12,
   opacity: 0.9
+};
+
+const tagBadgeStyle: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 8px",
+  borderRadius: 999,
+  background: "rgba(59,130,246,0.15)",
+  border: "1px solid rgba(59,130,246,0.35)",
+  color: "#60a5fa"
 };
