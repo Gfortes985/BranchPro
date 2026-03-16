@@ -97,8 +97,15 @@ function defaultPos(i: number, n: number) {
   };
 }
 
-export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
-  const api = useMemo(() => axios.create({ baseURL: props.baseUrl }), [props.baseUrl]);
+export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/v1"; serverOk: boolean; authToken?: string }) {
+  const api = useMemo(
+    () =>
+      axios.create({
+        baseURL: props.baseUrl,
+        headers: props.authToken ? { Authorization: `Bearer ${props.authToken}` } : undefined,
+      }),
+    [props.baseUrl, props.authToken]
+  );
 
   const [deployMap, setDeployMap] = useState<Record<string, any>>({});
 
@@ -118,6 +125,8 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [newName, setNewName] = useState("");
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const nodeTypes = useMemo(() => ({ emoji: EmojiNode }), []);
 
   const isNetView = !!selectedId;
@@ -126,13 +135,15 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   const [adminSocket, setAdminSocket] = useState<Socket | null>(null);
+  const [socketAvailable, setSocketAvailable] = useState<boolean | null>(null);
+  const [networkCrudSupported, setNetworkCrudSupported] = useState(true);
 
   const load = async () => {
     if (!props.serverOk) return;
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.get<Network[]>("/v1/networks");
+      const { data } = await api.get<Network[]>(`${props.apiPrefix}/networks`);
       setNets(data);
       // не авто-выбираем сеть: пользователь сам откроет
     } catch (e: any) {
@@ -149,13 +160,73 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.post("/v1/networks", { name });
+      const { data } = await api.post(`${props.apiPrefix}/networks`, { name });
       setNewName("");
       await load();
       // создаём сеть, но НЕ переходим автоматически
       setMsg(`Сеть создана ✅ (${data?.name ?? name})`);
     } catch (e: any) {
       setMsg("Ошибка создания сети: " + (e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startRenameNet = (id: string, currentName: string) => {
+    setRenameId(id);
+    setRenameValue(currentName);
+    setMsg("");
+  };
+
+  const cancelRenameNet = () => {
+    setRenameId(null);
+    setRenameValue("");
+  };
+
+  const saveRenameNet = async () => {
+    if (!renameId) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setMsg("Введите имя сети");
+      return;
+    }
+
+    setBusy(true);
+    setMsg("");
+    try {
+      await api.patch(`${props.apiPrefix}/networks/${renameId}`, { name: nextName });
+      setMsg("Сеть переименована ✅");
+      cancelRenameNet();
+      await load();
+    } catch (e: any) {
+      if (e?.response?.status === 405 || e?.response?.status === 404) {
+        setNetworkCrudSupported(false);
+        setMsg("Этот сервер пока не поддерживает переименование сети (PATCH /networks/:id)");
+      } else {
+        setMsg("Не удалось переименовать сеть: " + (e?.message ?? String(e)));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteNet = async (id: string) => {
+    if (!window.confirm("Удалить сеть? Это удалит только сеть, устройства останутся привязанными к аккаунту.")) return;
+
+    setBusy(true);
+    setMsg("");
+    try {
+      await api.delete(`${props.apiPrefix}/networks/${id}`);
+      if (selectedId === id) leaveNetwork();
+      await load();
+      setMsg("Сеть удалена ✅");
+    } catch (e: any) {
+      if (e?.response?.status === 405 || e?.response?.status === 404) {
+        setNetworkCrudSupported(false);
+        setMsg("Этот сервер пока не поддерживает удаление сети (DELETE /networks/:id)");
+      } else {
+        setMsg("Не удалось удалить сеть: " + (e?.message ?? String(e)));
+      }
     } finally {
       setBusy(false);
     }
@@ -179,12 +250,33 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     setPairLeftSec(0);
   };
 
+
+  const removeDeviceFromNetwork = async (deviceId: string) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      await api.delete(`${props.apiPrefix}/networks/${selectedId}/devices/${deviceId}`);
+      setDeployMap((m) => {
+        const next = { ...m };
+        delete next[deviceId];
+        return next;
+      });
+      await load();
+      setMsg("Устройство удалено из сети ✅");
+    } catch (e: any) {
+      setMsg("Не удалось удалить устройство из сети: " + (e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const startPairingInNet = async () => {
     if (!selectedId) return;
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.post(`/v1/networks/${selectedId}/pairing/start`);
+      const { data } = await api.post(`${props.apiPrefix}/networks/${selectedId}/pairing/start`);
 
       const code = data.code as string;
       const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60); // ✅ если сервер не прислал — 60 сек
@@ -269,18 +361,28 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
 
     useEffect(() => {
       if (!props.baseUrl) return;
+      if (socketAvailable === false) return;
 
       const s = io(`${props.baseUrl}/admin`, {
         transports: ["websocket"],
-        reconnection: true,
-        reconnectionDelay: 500,
-        reconnectionDelayMax: 3000,
+        reconnection: false,
+        timeout: 3000,
       });
 
+      let connected = false;
       setAdminSocket(s);
 
       s.on("connect", () => {
-        // можно лог
+        connected = true;
+        setSocketAvailable(true);
+      });
+
+      s.on("connect_error", () => {
+        if (!connected) {
+          setSocketAvailable(false);
+          s.disconnect();
+          setAdminSocket(null);
+        }
       });
 
       // если сервер говорит "сеть изменилась" — просто reload
@@ -315,7 +417,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
         setAdminSocket(null);
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [props.baseUrl]);
+    }, [props.baseUrl, socketAvailable]);
 
     useEffect(() => {
       if (!props.serverOk || !selectedId) return;
@@ -349,7 +451,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
     });
 
     try {
-      await api.patch(`/v1/networks/${selectedId}/layout`, { nodes: payload });
+      await api.patch(`${props.apiPrefix}/networks/${selectedId}/layout`, { nodes: payload });
     } catch {
       // тихо
     }
@@ -374,7 +476,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean }) {
       refreshing = true;
       // не блокируем UI общим busy — можно обновлять тихо
       api
-        .post(`/v1/networks/${selectedId}/pairing/start`)
+        .post(`${props.apiPrefix}/networks/${selectedId}/pairing/start`)
         .then(({ data }) => {
           const code = data.code as string;
           const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60);
@@ -453,14 +555,52 @@ const serverInfo = useMemo(() => {
               <div style={{ height: 12 }} />
 
               <div className="bpLabel">Список сетей</div>
+              {!networkCrudSupported ? <div className="bpMuted" style={{ marginTop: -2, marginBottom: 8 }}>Rename/Delete недоступны на этом сервере (endpoint не реализован)</div> : null}
               <div style={S.listNoScroll}>
-                {nets.map((n) => (
-                  <button key={n.id} className="bpNav" onClick={() => enterNetwork(n.id)}>
-                    <span style={{ opacity: 0.9 }}>🕸️</span>
-                    <span style={{ flex: 1, textAlign: "left" }}>{n.name}</span>
-                    <span className="bpPill">{n.devices?.length ?? 0}</span>
-                  </button>
-                ))}
+                {nets.map((n) => {
+                  const editing = renameId === n.id;
+                  return (
+                    <div key={n.id} className="bpNav" style={{ cursor: "default" }}>
+                      <span style={{ opacity: 0.9 }}>🕸️</span>
+
+                      {editing ? (
+                        <input
+                          className="bpInp"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          placeholder="Имя сети"
+                          style={{ height: 30 }}
+                        />
+                      ) : (
+                        <button className="bpLink" onClick={() => enterNetwork(n.id)}>
+                          {n.name}
+                        </button>
+                      )}
+
+                      <span className="bpPill">{n.devices?.length ?? 0}</span>
+
+                      {editing ? (
+                        <>
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={saveRenameNet} disabled={busy}>
+                            💾
+                          </button>
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={cancelRenameNet} disabled={busy}>
+                            ↩
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => startRenameNet(n.id, n.name)} disabled={busy || !networkCrudSupported} title="Переименовать">
+                            ✎
+                          </button>
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => deleteNet(n.id)} disabled={busy || !networkCrudSupported} title="Удалить сеть">
+                            🗑
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
                 {!nets.length ? <div className="bpMuted">Сетей нет</div> : null}
               </div>
 
@@ -476,7 +616,7 @@ const serverInfo = useMemo(() => {
                   <span style={{ opacity: 0.9 }}>🕸️</span>
                   <span>{selected?.name ?? "Network"}</span>
                 </div>
-                <div className="bpMuted">Управление сетью</div>
+                <div className="bpMuted">Управление сетью (rename/delete/detach)</div>
               </div>
               <button className="bpBtn ghost" onClick={leaveNetwork} title="Назад">
                 ←
@@ -535,25 +675,39 @@ const serverInfo = useMemo(() => {
                 <span className={`bpDot ${props.serverOk ? "ok" : "bad"}`} />
                 <span>{props.serverOk ? "Сервер доступен" : "Сервер недоступен"}</span>
               </div>
+              <div style={{ height: 8 }} />
+              <div className="bpMuted" style={{ marginTop: 0 }}>Realtime: {socketAvailable === false ? "off (fallback polling)" : socketAvailable === true ? "on" : "checking..."}</div>
               <div style={{ height: 12 }} />
 
               <div className="bpLabel">Устройства</div>
+              <div className="bpMuted" style={{ marginTop: -2, marginBottom: 8 }}>Кнопка ✕ убирает устройство из текущей сети</div>
               <div style={{ display: "grid", gap: 8 }}>
                 {(selected?.devices ?? []).map((d) => {
                   const prog = deployMap[d.device.id || d.deviceId];
 
                   return (
                     <div key={d.deviceId} className="bpStat" style={{ flexDirection: "column", alignItems: "stretch" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span className={`bpDot ${d.device.online ? "ok" : "bad"}`} />
                           <span style={{ fontWeight: 900 }}>
                             {d.device.name || d.device.id.slice(0, 6)}
                           </span>
                         </div>
-                        <span className="bpMuted" style={{ marginTop: 0 }}>
-                          {d.device.platform} {d.device.model}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="bpMuted" style={{ marginTop: 0 }}>
+                            {d.device.platform} {d.device.model}
+                          </span>
+                          <button
+                            className="bpBtn ghost"
+                            style={{ width: "auto", padding: "0 10px", height: 30 }}
+                            disabled={busy || !selectedId}
+                            onClick={() => removeDeviceFromNetwork(String(d.device.id || d.deviceId))}
+                            title="Убрать из сети"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
 
                       {/* 👇 ВОТ СЮДА вставляется deploy статус */}
@@ -777,6 +931,17 @@ const CSS = `
   cursor:pointer;
 }
 .bpNav:hover{ background: rgba(255,255,255,0.06); }
+.bpLink{
+  flex:1;
+  text-align:left;
+  background:transparent;
+  border:none;
+  color:#fff;
+  font-weight:800;
+  cursor:pointer;
+  padding:0;
+}
+.bpLink:hover{ opacity:.9; text-decoration: underline; }
 
 .bpPill{
   font-size: 11px;
