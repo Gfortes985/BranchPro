@@ -76,6 +76,15 @@ function snap(nodes: Node<NodeData>[], edges: Edge[], selectedNodeIds: string[],
   };
 }
 
+function sameArray(a: string[], b: string[]) {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 
 
 export const useEditorStore = create<S>()(
@@ -208,6 +217,10 @@ export const useEditorStore = create<S>()(
     },
 
     setSelection(nodeIds, edgeIds) {
+      const cur = get();
+      if (sameArray(cur.selectedNodeIds, nodeIds) && sameArray(cur.selectedEdgeIds, edgeIds)) {
+        return;
+      }
       set({ selectedNodeIds: nodeIds, selectedEdgeIds: edgeIds });
     },
 
