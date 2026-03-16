@@ -16,8 +16,12 @@ import NodeQuestion from "./editor/canvas/NodeQuestion";
 import NodeEnding from "./editor/canvas/NodeEnding";
 import Inspector from "./editor/inspector/Inspector";
 import ConfirmDelete from "./editor/dialogs/ConfirmDelete";
+import ValidationReport from "./editor/dialogs/ValidationReport";
+import PreviewPlayMode from "./editor/dialogs/PreviewPlayMode";
+import NodeSearchDialog from "./editor/dialogs/NodeSearchDialog";
 import { useEditorStore } from "./editor/store/editorStore";
 import { collectBundle, fromProject } from "./editor/file/projectIO";
+import { validateProject, type ValidationIssue } from "./editor/validation/validateProject";
 import type { Edge, Node } from "reactflow";
 import { nanoid } from "nanoid";
 import { LicenseGate } from "./auth/LicenseGate";
@@ -30,6 +34,16 @@ const nodeTypes: NodeTypes = {
   questionNode: NodeQuestion,
   endingNode: NodeEnding
 };
+
+type LocalVersionSnapshot = {
+  id: string;
+  createdAt: number;
+  title: string;
+  nodes: Node<any>[];
+  edges: Edge[];
+};
+
+const VERSIONS_KEY = "branchpro:editor:snapshots:v1";
 
 export default function App() {
   const isDirty = useEditorStore((s) => s.isDirty);
@@ -228,6 +242,184 @@ export default function App() {
   const isSelectingRef = useRef(false);
 
   const [miniOpen, setMiniOpen] = useState(true);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<LocalVersionSnapshot[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const loadSnapshots = useCallback((): LocalVersionSnapshot[] => {
+    try {
+      const raw = localStorage.getItem(VERSIONS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as LocalVersionSnapshot[];
+      if (!Array.isArray(parsed)) return [];
+      return parsed;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const saveSnapshot = useCallback((title: string) => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return false;
+    const existing = loadSnapshots();
+    const next: LocalVersionSnapshot[] = [
+      {
+        id: nanoid(),
+        createdAt: Date.now(),
+        title: cleanTitle,
+        nodes: structuredClone(nodes as any),
+        edges: structuredClone(edges)
+      },
+      ...existing
+    ].slice(0, 30);
+
+    localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setSnapshots(next);
+    setVersionsOpen(true);
+    return true;
+  }, [loadSnapshots, nodes, edges]);
+
+  const restoreSnapshot = useCallback((snapshot: LocalVersionSnapshot) => {
+    replaceAll(snapshot.nodes as any, snapshot.edges);
+    markDirty();
+    setVersionsOpen(false);
+    window.setTimeout(() => {
+      rfRef.current?.fitView?.({ padding: 0.22, duration: 350 });
+    }, 0);
+  }, [replaceAll, markDirty]);
+
+  const deleteSnapshot = useCallback((id: string) => {
+    const next = loadSnapshots().filter((v) => v.id !== id);
+    localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setSnapshots(next);
+    setVersionsOpen(true);
+  }, [loadSnapshots]);
+
+  const focusNode = useCallback((nodeId: string) => {
+    const target = nodes.find((n) => n.id === nodeId);
+    if (!target) return;
+
+    setSelection([nodeId], []);
+    setNodes(nodes.map((n) => ({ ...n, selected: n.id === nodeId })));
+
+    const p = target.position ?? { x: 0, y: 0 };
+    rfRef.current?.setCenter?.(p.x + 150, p.y + 70, { zoom: 1.1, duration: 300 });
+  }, [nodes, setNodes, setSelection]);
+
+  useEffect(() => {
+    if (!versionsOpen) return;
+    setSnapshots(loadSnapshots());
+  }, [versionsOpen, loadSnapshots]);
+
+  const runAutoLayout = useCallback(() => {
+    if (nodes.length === 0) return;
+
+    const outgoing = new Map<string, string[]>();
+    const incomingCount = new Map<string, number>();
+    for (const n of nodes) {
+      outgoing.set(n.id, []);
+      incomingCount.set(n.id, 0);
+    }
+
+    for (const e of edges) {
+      if (!outgoing.has(e.source) || !incomingCount.has(e.target)) continue;
+      outgoing.get(e.source)!.push(e.target);
+      incomingCount.set(e.target, (incomingCount.get(e.target) ?? 0) + 1);
+    }
+
+    const entryIds = nodes
+      .filter((n: any) => n.data?.kind === "question" && n.data?.isEntry)
+      .map((n) => n.id);
+
+    const roots = entryIds.length
+      ? entryIds
+      : nodes.filter((n) => (incomingCount.get(n.id) ?? 0) === 0).map((n) => n.id);
+
+    if (roots.length === 0 && nodes.length > 0) roots.push(nodes[0].id);
+
+    const levelById = new Map<string, number>();
+    const orderById = new Map<string, number>();
+    const queue: string[] = [];
+
+    roots.forEach((id, i) => {
+      levelById.set(id, 0);
+      orderById.set(id, i);
+      queue.push(id);
+    });
+
+    while (queue.length) {
+      const id = queue.shift()!;
+      const level = levelById.get(id) ?? 0;
+      const next = outgoing.get(id) ?? [];
+      for (const nextId of next) {
+        const candidate = level + 1;
+        const current = levelById.get(nextId);
+        if (current === undefined || candidate > current) {
+          levelById.set(nextId, candidate);
+        }
+        if (!orderById.has(nextId)) {
+          orderById.set(nextId, orderById.size);
+          queue.push(nextId);
+        }
+      }
+    }
+
+    nodes.forEach((n) => {
+      if (!levelById.has(n.id)) levelById.set(n.id, 0);
+      if (!orderById.has(n.id)) orderById.set(n.id, orderById.size);
+    });
+
+    const byLevel = new Map<number, string[]>();
+    for (const n of nodes) {
+      const lvl = levelById.get(n.id) ?? 0;
+      const arr = byLevel.get(lvl) ?? [];
+      arr.push(n.id);
+      byLevel.set(lvl, arr);
+    }
+
+    const X_STEP = 420;
+    const Y_STEP = 240;
+    const GRID = 20;
+
+    const toGrid = (v: number) => Math.round(v / GRID) * GRID;
+    const posById = new Map<string, { x: number; y: number }>();
+    const sortedLevels = [...byLevel.keys()].sort((a, b) => a - b);
+
+    for (const lvl of sortedLevels) {
+      const ids = byLevel.get(lvl) ?? [];
+      ids.sort((a, b) => (orderById.get(a) ?? 0) - (orderById.get(b) ?? 0));
+
+      const offsetY = -((ids.length - 1) * Y_STEP) / 2;
+      ids.forEach((id, i) => {
+        posById.set(id, {
+          x: toGrid(lvl * X_STEP),
+          y: toGrid(offsetY + i * Y_STEP)
+        });
+      });
+    }
+
+    markDirty();
+    setNodes(
+      nodes.map((n) => ({
+        ...n,
+        position: posById.get(n.id) ?? n.position
+      }))
+    );
+
+    window.setTimeout(() => {
+      rfRef.current?.fitView?.({ padding: 0.22, duration: 350 });
+    }, 0);
+  }, [nodes, edges, markDirty, setNodes]);
+
+  const runValidation = useCallback(() => {
+    const issues = validateProject(nodes as any, edges);
+    setValidationIssues(issues);
+    setValidationOpen(true);
+  }, [nodes, edges]);
 
   const onNodesChange = useCallback(
   (changes: NodeChange[]) => {
@@ -337,6 +529,10 @@ const isValidConnection = useCallback(
         e.preventDefault();
         pasteSelection();
         return;
+      } else if (ctrl && code === "KeyF") {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
       }
     };
 
@@ -344,6 +540,22 @@ const isValidConnection = useCallback(
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [undo, redo, requestDelete, addQuestion, saveToFile, copySelection, pasteSelection]);
+
+  useEffect(() => {
+    const allowFileDnD = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      if (!Array.from(e.dataTransfer.types || []).includes("Files")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    };
+
+    window.addEventListener("dragover", allowFileDnD);
+    window.addEventListener("drop", allowFileDnD);
+    return () => {
+      window.removeEventListener("dragover", allowFileDnD);
+      window.removeEventListener("drop", allowFileDnD);
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -481,7 +693,23 @@ const isValidConnection = useCallback(
     <LicenseGate>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
-          <TopBar />
+          <TopBar
+            onValidate={runValidation}
+            onPreview={() => setPreviewOpen(true)}
+            onAutoLayout={runAutoLayout}
+            onOpenVersions={() => {
+              setSnapshots(loadSnapshots());
+              setVersionsOpen(true);
+              setToolsOpen(false);
+            }}
+            toolsOpen={toolsOpen}
+            onToggleTools={() => setToolsOpen((v) => !v)}
+            onCloseTools={() => setToolsOpen(false)}
+            onOpenSearch={() => {
+              setSearchOpen(true);
+              setToolsOpen(false);
+            }}
+          />
 
           <div
             ref={wrapperRef}
@@ -550,6 +778,22 @@ const isValidConnection = useCallback(
           </div>
 
           <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
+          <ValidationReport open={validationOpen} issues={validationIssues} onClose={() => setValidationOpen(false)} />
+          <PreviewPlayMode open={previewOpen} nodes={nodes as any} edges={edges} onClose={() => setPreviewOpen(false)} />
+          <VersionsDialog
+            open={versionsOpen}
+            snapshots={snapshots}
+            onClose={() => setVersionsOpen(false)}
+            onRestore={restoreSnapshot}
+            onDelete={deleteSnapshot}
+            onCreateSnapshot={saveSnapshot}
+          />
+          <NodeSearchDialog
+            open={searchOpen}
+            nodes={nodes as any}
+            onClose={() => setSearchOpen(false)}
+            onFocusNode={focusNode}
+          />
         </div>
 
         <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
@@ -561,7 +805,16 @@ const isValidConnection = useCallback(
 
 }
 
-function TopBar() {
+function TopBar(props: {
+  onValidate: () => void;
+  onPreview: () => void;
+  onAutoLayout: () => void;
+  onOpenVersions: () => void;
+  onOpenSearch: () => void;
+  toolsOpen: boolean;
+  onToggleTools: () => void;
+  onCloseTools: () => void;
+}) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -600,6 +853,18 @@ function TopBar() {
       <button style={tbBtn} onClick={addQuestion}>➕ Вопрос (Ctrl+N)</button>
       <button style={tbBtn} onClick={addEnding}>🏁 Концовка</button>
       <button style={tbBtn} onClick={requestDelete}>🗑️ Удалить (Del)</button>
+      <div style={{ position: "relative" }}>
+        <button style={tbBtn} onClick={props.onToggleTools}>🧰 Инструменты</button>
+        {props.toolsOpen ? (
+          <div style={toolsMenu}>
+            <button style={toolsBtn} onClick={() => { props.onValidate(); props.onCloseTools(); }}>🧪 Проверить проект</button>
+            <button style={toolsBtn} onClick={() => { props.onPreview(); props.onCloseTools(); }}>▶️ Превью</button>
+            <button style={toolsBtn} onClick={() => { props.onAutoLayout(); props.onCloseTools(); }}>🧭 Авторасставить</button>
+            <button style={toolsBtn} onClick={props.onOpenSearch}>🔎 Поиск нод (Ctrl+F)</button>
+            <button style={toolsBtn} onClick={props.onOpenVersions}>🕘 Версии / снимки</button>
+          </div>
+        ) : null}
+      </div>
       
 
       <div style={{ width: 10 }} />
@@ -623,6 +888,67 @@ function TopBar() {
   );
 }
 
+function VersionsDialog(props: {
+  open: boolean;
+  snapshots: LocalVersionSnapshot[];
+  onClose: () => void;
+  onRestore: (snapshot: LocalVersionSnapshot) => void;
+  onDelete: (id: string) => void;
+  onCreateSnapshot: (title: string) => boolean;
+}) {
+  const [title, setTitle] = useState("");
+
+  if (!props.open) return null;
+
+  return (
+    <div style={ovl} onClick={props.onClose}>
+      <div style={dlg} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>Локальные версии</div>
+          <button style={tbBtn} onClick={props.onClose}>Закрыть</button>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Название снимка"
+            style={modalInput}
+          />
+          <button
+            style={tbBtn}
+            onClick={() => {
+              const ok = props.onCreateSnapshot(title || `Снимок ${new Date().toLocaleString()}`);
+              if (ok) setTitle("");
+            }}
+          >
+            📸 Создать снимок
+          </button>
+        </div>
+
+        <div style={{ marginTop: 10, maxHeight: 420, overflow: "auto", display: "grid", gap: 8 }}>
+          {props.snapshots.length === 0 ? (
+            <div style={{ opacity: 0.7, fontSize: 13 }}>Снимков пока нет. Нажми «📸 Снимок» в topbar.</div>
+          ) : (
+            props.snapshots.map((s) => (
+              <div key={s.id} style={{ border: "1px solid #2a2a2a", borderRadius: 10, padding: 10, background: "#121212" }}>
+                <div style={{ fontWeight: 700 }}>{s.title}</div>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
+                  {new Date(s.createdAt).toLocaleString()} · Нод: {s.nodes.length} · Связей: {s.edges.length}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                  <button style={tbBtn} onClick={() => props.onRestore(s)}>Восстановить</button>
+                  <button style={btnDangerSmall} onClick={() => props.onDelete(s.id)}>Удалить</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const tbBtn: React.CSSProperties = {
   padding: "8px 10px",
   borderRadius: 12,
@@ -630,6 +956,66 @@ const tbBtn: React.CSSProperties = {
   background: "#151515",
   color: "#fff",
   cursor: "pointer"
+};
+
+const btnDangerSmall: React.CSSProperties = {
+  padding: "8px 10px",
+  borderRadius: 10,
+  border: "1px solid #3a1b1b",
+  background: "#2a0f0f",
+  color: "#fff",
+  cursor: "pointer",
+  fontSize: 12
+};
+
+const toolsMenu: React.CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 8px)",
+  left: 0,
+  minWidth: 220,
+  display: "grid",
+  gap: 6,
+  padding: 8,
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#111",
+  zIndex: 1200
+};
+
+const toolsBtn: React.CSSProperties = {
+  ...tbBtn,
+  width: "100%",
+  textAlign: "left"
+};
+
+const modalInput: React.CSSProperties = {
+  flex: 1,
+  minWidth: 160,
+  padding: "10px",
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#111",
+  color: "#fff"
+};
+
+const ovl: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.5)",
+  display: "grid",
+  placeItems: "center",
+  zIndex: 1000
+};
+
+const dlg: React.CSSProperties = {
+  width: "min(760px, calc(100vw - 32px))",
+  maxHeight: "min(560px, calc(100vh - 32px))",
+  overflow: "hidden",
+  background: "#0f0f0f",
+  color: "#fff",
+  border: "1px solid #2a2a2a",
+  borderRadius: 12,
+  padding: 12
 };
 
 /* ---------------- MiniMap Overlay ---------------- */
@@ -1478,4 +1864,3 @@ if (typeof document !== "undefined" && !document.getElementById(accStyleId)) {
 function basename(p: string) {
   return String(p).split(/[\\/]/).pop() ?? p;
 }
-
