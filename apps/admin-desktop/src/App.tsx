@@ -74,6 +74,9 @@ export default function App() {
   const [deployVersionId, setDeployVersionId] = useState(localStorage.getItem("bp_deploy_version_id") ?? "");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [deviceQuery, setDeviceQuery] = useState("");
+  const [deviceOnlineFilter, setDeviceOnlineFilter] = useState<"all" | "online" | "offline">("all");
+  const [deviceSort, setDeviceSort] = useState<"name" | "status" | "platform" | "version">("status");
 
   const saveToken = () => {
     const token = authToken.trim();
@@ -175,8 +178,44 @@ export default function App() {
       }
     );
 
-    return () => api.interceptors.response.eject(id);
+  
+
+  return () => api.interceptors.response.eject(id);
   }, [api]);
+
+  const filteredDevices = useMemo(() => {
+    const q = deviceQuery.trim().toLowerCase();
+
+    let rows = [...devices];
+
+    if (deviceOnlineFilter !== "all") {
+      const wanted = deviceOnlineFilter === "online";
+      rows = rows.filter((d) => d.online === wanted);
+    }
+
+    if (q) {
+      rows = rows.filter((d) => {
+        const id = String(d.id ?? "").toLowerCase();
+        const name = String(d.name ?? "").toLowerCase();
+        const platform = String(d.platform ?? "").toLowerCase();
+        const model = String(d.model ?? "").toLowerCase();
+        const version = String(d.appVersion ?? "").toLowerCase();
+        return id.includes(q) || name.includes(q) || platform.includes(q) || model.includes(q) || version.includes(q);
+      });
+    }
+
+    rows.sort((a, b) => {
+      if (deviceSort === "status") {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      }
+      if (deviceSort === "name") return a.name.localeCompare(b.name);
+      if (deviceSort === "platform") return `${a.platform} ${a.model}`.localeCompare(`${b.platform} ${b.model}`);
+      return String(a.appVersion ?? "").localeCompare(String(b.appVersion ?? ""));
+    });
+
+    return rows;
+  }, [devices, deviceOnlineFilter, deviceQuery, deviceSort]);
 
   const loadDashboardStats = async () => {
     if (!serverOk) {
@@ -560,6 +599,28 @@ export default function App() {
                 />
               </div>
 
+              <div className="label">Поиск / фильтры устройств</div>
+              <div className="row" style={{ marginBottom: 10, flexWrap: "wrap" }}>
+                <input
+                  className="inp"
+                  value={deviceQuery}
+                  onChange={(e) => setDeviceQuery(e.target.value)}
+                  placeholder="Поиск: id, имя, платформа, модель, версия"
+                  style={{ minWidth: 280 }}
+                />
+                <select className="inp" value={deviceOnlineFilter} onChange={(e) => setDeviceOnlineFilter(e.target.value as any)} style={{ maxWidth: 180 }}>
+                  <option value="all">Все статусы</option>
+                  <option value="online">Только online</option>
+                  <option value="offline">Только offline</option>
+                </select>
+                <select className="inp" value={deviceSort} onChange={(e) => setDeviceSort(e.target.value as any)} style={{ maxWidth: 220 }}>
+                  <option value="status">Сортировка: статус</option>
+                  <option value="name">Сортировка: имя</option>
+                  <option value="platform">Сортировка: платформа</option>
+                  <option value="version">Сортировка: версия</option>
+                </select>
+              </div>
+
               <div className="row">
                 <button className="btn ghost" onClick={loadDevices} disabled={busy || !serverOk}>
                   ⟳ Обновить
@@ -588,7 +649,7 @@ export default function App() {
                   <div></div>
                 </div>
 
-                {devices.map((d) => (
+                {filteredDevices.map((d) => (
                   <div className="tr" key={d.id}>
                     <div className="mono">{d.id.slice(0, 10)}…</div>
                     <div>{d.name}</div>
@@ -609,7 +670,7 @@ export default function App() {
                   </div>
                 ))}
 
-                {!devices.length ? <div className="muted" style={{ marginTop: 10 }}>Нажми “Обновить” чтобы загрузить список</div> : null}
+                {!devices.length ? <div className="muted" style={{ marginTop: 10 }}>Нажми “Обновить” чтобы загрузить список</div> : !filteredDevices.length ? <div className="muted" style={{ marginTop: 10 }}>По текущим фильтрам устройств нет</div> : null}
               </div>
             </Card>
           ) : null}
