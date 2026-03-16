@@ -739,10 +739,15 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
 
   // иначе показываем "Save As"
   if (!filePath) {
+    const isPlayerTarget = payload?.target === "player";
     const res = await dialog.showSaveDialog(win, {
-      title: "Сохранить BranchPro проект",
-      defaultPath: "project.branchpro",
-      filters: [{ name: "BranchPro Project", extensions: ["branchpro"] }]
+      title: isPlayerTarget ? "Экспорт для Player" : "Сохранить BranchPro проект",
+      defaultPath: isPlayerTarget ? "project.brplayer" : "project.branchpro",
+      filters: [
+        isPlayerTarget
+          ? { name: "BranchPro Player Bundle", extensions: ["brplayer"] }
+          : { name: "BranchPro Project", extensions: ["branchpro"] }
+      ]
     });
     if (res.canceled || !res.filePath) return { ok: false, canceled: true };
     filePath = res.filePath;
