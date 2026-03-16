@@ -16,22 +16,24 @@ type DeviceRow = {
   lastSeenAgeSec: number;
 };
 
-function normalizeUrl(u: string) {
-  let s = (u || "").trim();
-  if (!s) return "";
-  s = s.replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(s)) s = "http://" + s;
-  return s;
-}
+const FIXED_SERVER_URL = "http://localhost:3000";
 
 export default function App() {
-  
   const [page, setPage] = useState<Page>("dashboard");
 
-  const [serverUrl, setServerUrl] = useState(localStorage.getItem("bp_server_url") ?? "http://localhost:3000");
-  const baseUrl = useMemo(() => normalizeUrl(serverUrl), [serverUrl]);
+  const [authToken, setAuthToken] = useState(localStorage.getItem("bp_auth_token") ?? "");
+  const [authEmail, setAuthEmail] = useState(localStorage.getItem("bp_auth_email") ?? "");
+  const [authPassword, setAuthPassword] = useState("");
+  const baseUrl = FIXED_SERVER_URL;
 
-  const api = useMemo(() => axios.create({ baseURL: baseUrl }), [baseUrl]);
+  const api = useMemo(
+    () =>
+      axios.create({
+        baseURL: baseUrl,
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      }),
+    [baseUrl, authToken]
+  );
 
   const isNetworks = page === "networks";
   const sidebarCollapsed = isNetworks;
@@ -46,12 +48,38 @@ export default function App() {
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [pairExpires, setPairExpires] = useState<number | null>(null);
 
-  const saveServerUrl = () => {
-    const fixed = normalizeUrl(serverUrl);
-    setServerUrl(fixed);
-    localStorage.setItem("bp_server_url", fixed);
-    setToast("✅ Server URL сохранён");
-    setServerOk(null);
+  const saveToken = () => {
+    const token = authToken.trim();
+    setAuthToken(token);
+    localStorage.setItem("bp_auth_token", token);
+    if (!token) {
+      setToast("Токен очищен");
+      return;
+    }
+    setToast("✅ API токен сохранён");
+  };
+
+  const loginAndSaveToken = async () => {
+    if (!baseUrl) return;
+    setBusy(true);
+    setToast("");
+    try {
+      const { data } = await axios.post(`${baseUrl}/api/auth/login`, {
+        email: authEmail,
+        password: authPassword,
+      });
+      const token = String(data?.token ?? "").trim();
+      if (!token) throw new Error("Токен не получен");
+
+      setAuthToken(token);
+      localStorage.setItem("bp_auth_token", token);
+      localStorage.setItem("bp_auth_email", authEmail);
+      setToast("✅ Вход выполнен, токен сохранён");
+    } catch (e: any) {
+      setToast("❌ Ошибка входа: " + (e?.response?.data?.error ?? e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const checkServer = async () => {
@@ -168,11 +196,11 @@ export default function App() {
             </div>
             <div className="sub">
               {page === "networks"
-                ? "Сначала подключи сервер → потом создавай сети → добавляй устройства"
+                ? "Проверь сервер → потом создавай сети → добавляй устройства"
                 : page === "devices"
                 ? "Список устройств на сервере"
                 : page === "settings"
-                ? "Адрес сервера и проверка соединения"
+                ? "Фиксированный сервер и авторизация"
                 : " "}
             </div>
           </div>
@@ -180,7 +208,7 @@ export default function App() {
           <div className="row">
             {page !== "settings" ? (
               <button className="btn ghost" onClick={() => setPage("settings")}>
-                ⚙️ Настроить сервер
+                ⚙️ Настройки
               </button>
             ) : null}
           </div>
@@ -193,39 +221,73 @@ export default function App() {
                 Здесь будет обзор: активные сети, онлайн устройства, последние деплои и ошибки.
               </div>
               <div style={{ marginTop: 12 }} className="muted">
-                Начни с <b>Settings</b>: укажи сервер и нажми “Проверить”.
+                Начни с <b>Settings</b>: проверь соединение и выполни вход.
               </div>
             </Card>
           ) : null}
 
           {page === "settings" ? (
             <Card title="Сервер">
-              <div className="row" style={{ alignItems: "flex-end" }}>
-                <div style={{ flex: 1 }}>
-                  <div className="label">Server URL</div>
-                  <input
-                    className="inp"
-                    value={serverUrl}
-                    onChange={(e) => setServerUrl(e.target.value)}
-                    placeholder="http://localhost:3000"
-                  />
-                </div>
-                <button className="btn" onClick={saveServerUrl} disabled={busy}>
-                  Сохранить
-                </button>
-                <button className="btn ghost" onClick={checkServer} disabled={busy || !baseUrl}>
+              <div className="label">Server URL (фиксирован в приложении)</div>
+              <div className="muted mono" style={{ marginTop: 6 }}>{baseUrl}</div>
+
+              <div style={{ marginTop: 12 }}>
+                <button className="btn ghost" onClick={checkServer} disabled={busy}>
                   🔎 Проверить
                 </button>
               </div>
 
               <div style={{ marginTop: 12 }} className="muted">
-                Подсказка: для dev можешь использовать <span className="mono">http://localhost:3000</span>.
+                URL зашит в код и не требует ручного ввода.
+              </div>
+
+              <div style={{ height: 16 }} />
+
+              <div className="label">BranchProLicenseServer API token (Bearer)</div>
+              <div className="row" style={{ alignItems: "flex-end" }}>
+                <input
+                  className="inp"
+                  value={authToken}
+                  onChange={(e) => setAuthToken(e.target.value)}
+                  placeholder="Вставь токен или выполни вход ниже"
+                />
+                <button className="btn" onClick={saveToken} disabled={busy}>
+                  Сохранить токен
+                </button>
+              </div>
+
+              <div style={{ height: 12 }} />
+
+              <div className="label">Вход (получить токен автоматически)</div>
+              <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                <input
+                  className="inp"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="email"
+                  style={{ minWidth: 220 }}
+                />
+                <input
+                  className="inp"
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="password"
+                  style={{ minWidth: 200 }}
+                />
+                <button className="btn" onClick={loginAndSaveToken} disabled={busy || !authEmail || !authPassword || !baseUrl}>
+                  Войти и сохранить токен
+                </button>
+              </div>
+
+              <div style={{ marginTop: 10 }} className="muted">
+                Для BranchProLicenseServer защищённые endpoint'ы <span className="mono">/v1/*</span> требуют Bearer-токен.
               </div>
             </Card>
           ) : null}
 
           {page === "networks" ? (
-            <NetworksPage baseUrl={baseUrl} serverOk={!!serverOk} />
+            <NetworksPage baseUrl={baseUrl} serverOk={!!serverOk} authToken={authToken} />
           ) : null}
 
 
