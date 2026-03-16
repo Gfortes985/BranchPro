@@ -31,6 +31,7 @@ export default function Inspector() {
   const mediaList = (((data as any).mediaList ?? []) as MediaRef[]) ?? [];
   const mediaIndex = Math.max(0, Math.min(((data as any).mediaIndex ?? 0) as number, Math.max(0, mediaList.length - 1)));
   const current = mediaList[mediaIndex] ?? null;
+  const tags: string[] = ((data as any).tags ?? []) as string[];
 
   const setMedia = (list: MediaRef[], idx: number) => {
     patchNode(node.id, { mediaList: list, mediaIndex: idx } as any);
@@ -80,6 +81,17 @@ export default function Inspector() {
           patchNode={patchNode}
         />
       ) : null}
+
+      <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
+        <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700 }}>Теги</div>
+        <input
+          value={tags.join(", ")}
+          onChange={(e) => patchNode(node.id, { tags: parseTags(e.target.value) } as any)}
+          style={inp}
+          placeholder="Например: chapter-1, onboarding"
+        />
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>Разделяй теги запятыми.</div>
+      </div>
 
       {/* Вложения (общие) */}
       <div style={{ marginTop: 14, borderTop: "1px solid #1f1f1f", paddingTop: 14 }}>
@@ -452,6 +464,17 @@ function formatDuration(seconds: number) {
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+function parseTags(input: string) {
+  return Array.from(
+    new Set(
+      input
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 const lbl: React.CSSProperties = { display: "block", marginTop: 12, fontSize: 12, opacity: 0.8 };

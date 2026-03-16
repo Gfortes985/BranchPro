@@ -750,6 +750,12 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
 
   const zip = new JSZip();
 
+  const optimizeLevel = payload?.optimizeLevel === "max" ? "max" : "balanced";
+  const imgQuality = optimizeLevel === "max" ? 65 : 80;
+  const videoOpts = optimizeLevel === "max"
+    ? { crf: 32, preset: "slow", maxWidth: 960 }
+    : { crf: 28, preset: "medium", maxWidth: 1280 };
+
     // ✅ мапа переименований: старый media path -> новый media path
   const renameMap = new Map();
 
@@ -764,7 +770,7 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
   // картинки → webp
     if (["png", "jpg", "jpeg", "webp"].includes(ext)) {
       try {
-        const outBuf = await optimizeImageToWebp(buf, 80);
+        const outBuf = await optimizeImageToWebp(buf, imgQuality);
         const newName = replaceExt(name, "webp");
 
         renameMap.set(name, newName);
@@ -780,7 +786,7 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
   // видео → mp4
     if (["mp4", "mov", "webm"].includes(ext)) {
       try {
-        const outBuf = await optimizeVideoToMp4(buf, { crf: 28, preset: "medium", maxWidth: 1280 });
+        const outBuf = await optimizeVideoToMp4(buf, videoOpts);
         const newName = replaceExt(name, "mp4");
 
         renameMap.set(name, newName);

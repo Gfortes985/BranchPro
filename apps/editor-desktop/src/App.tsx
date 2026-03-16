@@ -120,6 +120,7 @@ export default function App() {
   const cancelDelete = useEditorStore((s) => s.cancelDelete);
 
   const setSelection = useEditorStore((s) => s.setSelection);
+  const pushHistory = useEditorStore((s) => s.pushHistory);
   const selectedNodeIds = useEditorStore((s) => s.selectedNodeIds);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -227,6 +228,7 @@ export default function App() {
   // снимаем выделение со старых
   const clearedNodes = nodes.map((n) => ({ ...n, selected: false }));
 
+  pushHistory();
   markDirty();
   setNodes([...clearedNodes, ...newNodes]);
   setEdges([...edges, ...newEdges]);
@@ -235,7 +237,21 @@ export default function App() {
   setSelection(newNodes.map((n) => n.id), []);
 
   buf.pasteCount += 1;
-}, [nodes, edges, setNodes, setEdges, markDirty, setSelection]);
+}, [nodes, edges, setNodes, setEdges, markDirty, setSelection, pushHistory]);
+
+  const exportForPlayer = useCallback(async () => {
+    const bundle = await collectBundle(nodes, edges);
+    const res = await window.branchpro.saveBundle({
+      ...bundle,
+      filePath: null,
+      optimizeLevel: "max",
+      target: "player"
+    } as any);
+    if (res?.ok) {
+      setCurrentFilePath(res.path ?? currentFilePath);
+      markSaved();
+    }
+  }, [nodes, edges, setCurrentFilePath, markSaved, currentFilePath]);
 
 
 
@@ -761,6 +777,10 @@ const isValidConnection = useCallback(
               setSearchOpen(true);
               setToolsOpen(false);
             }}
+            onExportPlayer={() => {
+              exportForPlayer();
+              setToolsOpen(false);
+            }}
           />
 
           <div
@@ -865,6 +885,7 @@ function TopBar(props: {
   onAutoLayout: () => void;
   onOpenVersions: () => void;
   onOpenSearch: () => void;
+  onExportPlayer: () => void;
   toolsOpen: boolean;
   onToggleTools: () => void;
   onCloseTools: () => void;
@@ -916,6 +937,7 @@ function TopBar(props: {
             <button style={toolsBtn} onClick={() => { props.onAutoLayout(); props.onCloseTools(); }}>🧭 Авторасставить</button>
             <button style={toolsBtn} onClick={props.onOpenSearch}>🔎 Поиск нод (Ctrl+F)</button>
             <button style={toolsBtn} onClick={props.onOpenVersions}>🕘 Версии / снимки</button>
+            <button style={toolsBtn} onClick={props.onExportPlayer}>📦 Экспорт для Player</button>
           </div>
         ) : null}
       </div>
