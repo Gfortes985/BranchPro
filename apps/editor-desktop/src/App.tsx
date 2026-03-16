@@ -245,6 +245,8 @@ export default function App() {
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<LocalVersionSnapshot[]>([]);
 
   const loadSnapshots = useCallback((): LocalVersionSnapshot[] => {
     try {
@@ -258,16 +260,15 @@ export default function App() {
     }
   }, []);
 
-  const saveSnapshot = useCallback(() => {
-    const title = window.prompt("Название снимка версии", `Снимок ${new Date().toLocaleString()}`)?.trim();
-    if (!title) return;
-
+  const saveSnapshot = useCallback((title: string) => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return false;
     const existing = loadSnapshots();
     const next: LocalVersionSnapshot[] = [
       {
         id: nanoid(),
         createdAt: Date.now(),
-        title,
+        title: cleanTitle,
         nodes: structuredClone(nodes as any),
         edges: structuredClone(edges)
       },
@@ -275,7 +276,9 @@ export default function App() {
     ].slice(0, 30);
 
     localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setSnapshots(next);
     setVersionsOpen(true);
+    return true;
   }, [loadSnapshots, nodes, edges]);
 
   const restoreSnapshot = useCallback((snapshot: LocalVersionSnapshot) => {
@@ -290,8 +293,14 @@ export default function App() {
   const deleteSnapshot = useCallback((id: string) => {
     const next = loadSnapshots().filter((v) => v.id !== id);
     localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setSnapshots(next);
     setVersionsOpen(true);
   }, [loadSnapshots]);
+
+  useEffect(() => {
+    if (!versionsOpen) return;
+    setSnapshots(loadSnapshots());
+  }, [versionsOpen, loadSnapshots]);
 
   const runAutoLayout = useCallback(() => {
     if (nodes.length === 0) return;
@@ -671,8 +680,14 @@ const isValidConnection = useCallback(
             onValidate={runValidation}
             onPreview={() => setPreviewOpen(true)}
             onAutoLayout={runAutoLayout}
-            onSaveSnapshot={saveSnapshot}
-            onOpenVersions={() => setVersionsOpen(true)}
+            onOpenVersions={() => {
+              setSnapshots(loadSnapshots());
+              setVersionsOpen(true);
+              setToolsOpen(false);
+            }}
+            toolsOpen={toolsOpen}
+            onToggleTools={() => setToolsOpen((v) => !v)}
+            onCloseTools={() => setToolsOpen(false)}
           />
 
           <div
@@ -746,10 +761,11 @@ const isValidConnection = useCallback(
           <PreviewPlayMode open={previewOpen} nodes={nodes as any} edges={edges} onClose={() => setPreviewOpen(false)} />
           <VersionsDialog
             open={versionsOpen}
-            snapshots={loadSnapshots()}
+            snapshots={snapshots}
             onClose={() => setVersionsOpen(false)}
             onRestore={restoreSnapshot}
             onDelete={deleteSnapshot}
+            onCreateSnapshot={saveSnapshot}
           />
         </div>
 
@@ -766,8 +782,10 @@ function TopBar(props: {
   onValidate: () => void;
   onPreview: () => void;
   onAutoLayout: () => void;
-  onSaveSnapshot: () => void;
   onOpenVersions: () => void;
+  toolsOpen: boolean;
+  onToggleTools: () => void;
+  onCloseTools: () => void;
 }) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
@@ -807,11 +825,17 @@ function TopBar(props: {
       <button style={tbBtn} onClick={addQuestion}>➕ Вопрос (Ctrl+N)</button>
       <button style={tbBtn} onClick={addEnding}>🏁 Концовка</button>
       <button style={tbBtn} onClick={requestDelete}>🗑️ Удалить (Del)</button>
-      <button style={tbBtn} onClick={props.onValidate}>🧪 Проверить проект</button>
-      <button style={tbBtn} onClick={props.onPreview}>▶️ Превью</button>
-      <button style={tbBtn} onClick={props.onAutoLayout}>🧭 Авторасставить</button>
-      <button style={tbBtn} onClick={props.onSaveSnapshot}>📸 Снимок</button>
-      <button style={tbBtn} onClick={props.onOpenVersions}>🕘 Версии</button>
+      <div style={{ position: "relative" }}>
+        <button style={tbBtn} onClick={props.onToggleTools}>🧰 Инструменты</button>
+        {props.toolsOpen ? (
+          <div style={toolsMenu}>
+            <button style={toolsBtn} onClick={() => { props.onValidate(); props.onCloseTools(); }}>🧪 Проверить проект</button>
+            <button style={toolsBtn} onClick={() => { props.onPreview(); props.onCloseTools(); }}>▶️ Превью</button>
+            <button style={toolsBtn} onClick={() => { props.onAutoLayout(); props.onCloseTools(); }}>🧭 Авторасставить</button>
+            <button style={toolsBtn} onClick={props.onOpenVersions}>🕘 Версии / снимки</button>
+          </div>
+        ) : null}
+      </div>
       
 
       <div style={{ width: 10 }} />
@@ -841,7 +865,10 @@ function VersionsDialog(props: {
   onClose: () => void;
   onRestore: (snapshot: LocalVersionSnapshot) => void;
   onDelete: (id: string) => void;
+  onCreateSnapshot: (title: string) => boolean;
 }) {
+  const [title, setTitle] = useState("");
+
   if (!props.open) return null;
 
   return (
@@ -850,6 +877,24 @@ function VersionsDialog(props: {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>Локальные версии</div>
           <button style={tbBtn} onClick={props.onClose}>Закрыть</button>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Название снимка"
+            style={modalInput}
+          />
+          <button
+            style={tbBtn}
+            onClick={() => {
+              const ok = props.onCreateSnapshot(title || `Снимок ${new Date().toLocaleString()}`);
+              if (ok) setTitle("");
+            }}
+          >
+            📸 Создать снимок
+          </button>
         </div>
 
         <div style={{ marginTop: 10, maxHeight: 420, overflow: "auto", display: "grid", gap: 8 }}>
@@ -892,6 +937,36 @@ const btnDangerSmall: React.CSSProperties = {
   color: "#fff",
   cursor: "pointer",
   fontSize: 12
+};
+
+const toolsMenu: React.CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 8px)",
+  left: 0,
+  minWidth: 220,
+  display: "grid",
+  gap: 6,
+  padding: 8,
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#111",
+  zIndex: 1200
+};
+
+const toolsBtn: React.CSSProperties = {
+  ...tbBtn,
+  width: "100%",
+  textAlign: "left"
+};
+
+const modalInput: React.CSSProperties = {
+  flex: 1,
+  minWidth: 160,
+  padding: "10px",
+  borderRadius: 10,
+  border: "1px solid #2a2a2a",
+  background: "#111",
+  color: "#fff"
 };
 
 const ovl: React.CSSProperties = {
