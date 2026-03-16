@@ -98,8 +98,7 @@ export default function App() {
     }
   };
 
-  const loginAndSaveToken = async () => {
-    if (!baseUrl) return;
+  async function checkServer() {
     setBusy(true);
     setToast("");
     try {
@@ -134,7 +133,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  };
+  }
 
 
   useEffect(() => {
