@@ -135,6 +135,8 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   const [adminSocket, setAdminSocket] = useState<Socket | null>(null);
+  const [socketAvailable, setSocketAvailable] = useState<boolean | null>(null);
+  const [networkCrudSupported, setNetworkCrudSupported] = useState(true);
 
   const load = async () => {
     if (!props.serverOk) return;
@@ -197,7 +199,12 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
       cancelRenameNet();
       await load();
     } catch (e: any) {
-      setMsg("Не удалось переименовать сеть: " + (e?.message ?? String(e)));
+      if (e?.response?.status === 405 || e?.response?.status === 404) {
+        setNetworkCrudSupported(false);
+        setMsg("Этот сервер пока не поддерживает переименование сети (PATCH /networks/:id)");
+      } else {
+        setMsg("Не удалось переименовать сеть: " + (e?.message ?? String(e)));
+      }
     } finally {
       setBusy(false);
     }
@@ -214,7 +221,12 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
       await load();
       setMsg("Сеть удалена ✅");
     } catch (e: any) {
-      setMsg("Не удалось удалить сеть: " + (e?.message ?? String(e)));
+      if (e?.response?.status === 405 || e?.response?.status === 404) {
+        setNetworkCrudSupported(false);
+        setMsg("Этот сервер пока не поддерживает удаление сети (DELETE /networks/:id)");
+      } else {
+        setMsg("Не удалось удалить сеть: " + (e?.message ?? String(e)));
+      }
     } finally {
       setBusy(false);
     }
@@ -349,18 +361,28 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
 
     useEffect(() => {
       if (!props.baseUrl) return;
+      if (socketAvailable === false) return;
 
       const s = io(`${props.baseUrl}/admin`, {
         transports: ["websocket"],
-        reconnection: true,
-        reconnectionDelay: 500,
-        reconnectionDelayMax: 3000,
+        reconnection: false,
+        timeout: 3000,
       });
 
+      let connected = false;
       setAdminSocket(s);
 
       s.on("connect", () => {
-        // можно лог
+        connected = true;
+        setSocketAvailable(true);
+      });
+
+      s.on("connect_error", () => {
+        if (!connected) {
+          setSocketAvailable(false);
+          s.disconnect();
+          setAdminSocket(null);
+        }
       });
 
       // если сервер говорит "сеть изменилась" — просто reload
@@ -395,7 +417,7 @@ export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/
         setAdminSocket(null);
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [props.baseUrl]);
+    }, [props.baseUrl, socketAvailable]);
 
     useEffect(() => {
       if (!props.serverOk || !selectedId) return;
@@ -533,6 +555,7 @@ const serverInfo = useMemo(() => {
               <div style={{ height: 12 }} />
 
               <div className="bpLabel">Список сетей</div>
+              {!networkCrudSupported ? <div className="bpMuted" style={{ marginTop: -2, marginBottom: 8 }}>Rename/Delete недоступны на этом сервере (endpoint не реализован)</div> : null}
               <div style={S.listNoScroll}>
                 {nets.map((n) => {
                   const editing = renameId === n.id;
@@ -567,10 +590,10 @@ const serverInfo = useMemo(() => {
                         </>
                       ) : (
                         <>
-                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => startRenameNet(n.id, n.name)} disabled={busy} title="Переименовать">
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => startRenameNet(n.id, n.name)} disabled={busy || !networkCrudSupported} title="Переименовать">
                             ✎
                           </button>
-                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => deleteNet(n.id)} disabled={busy} title="Удалить сеть">
+                          <button className="bpBtn ghost" style={{ width: "auto", padding: "0 10px", height: 30 }} onClick={() => deleteNet(n.id)} disabled={busy || !networkCrudSupported} title="Удалить сеть">
                             🗑
                           </button>
                         </>
@@ -652,6 +675,8 @@ const serverInfo = useMemo(() => {
                 <span className={`bpDot ${props.serverOk ? "ok" : "bad"}`} />
                 <span>{props.serverOk ? "Сервер доступен" : "Сервер недоступен"}</span>
               </div>
+              <div style={{ height: 8 }} />
+              <div className="bpMuted" style={{ marginTop: 0 }}>Realtime: {socketAvailable === false ? "off (fallback polling)" : socketAvailable === true ? "on" : "checking..."}</div>
               <div style={{ height: 12 }} />
 
               <div className="bpLabel">Устройства</div>
