@@ -17,8 +17,12 @@ type DeviceRow = {
 };
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 const FIXED_SERVER_HOST = "81.30.105.141";
 const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
+=======
+const FIXED_SERVER_URL = "http://81.30.105.141";
+>>>>>>> Stashed changes
 =======
 const FIXED_SERVER_URL = "http://81.30.105.141";
 >>>>>>> Stashed changes
