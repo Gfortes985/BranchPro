@@ -43,6 +43,8 @@ type S = {
   cancelDelete: () => void;
 
   patchNode: (id: string, patch: Partial<NodeData>) => void;
+  patchNodes: (ids: string[], patch: Partial<NodeData>) => void;
+  mapNodesData: (ids: string[], mapper: (data: NodeData) => NodeData) => void;
 
   resetHistory: () => void;
   replaceAll: (nodes: Node<NodeData>[], edges: Edge[]) => void;
@@ -310,6 +312,36 @@ export const useEditorStore = create<S>()(
         s.isDirty = true;
         (window as any).branchpro?.setDirty?.(true);
 
+      });
+    },
+
+    patchNodes(ids, patch) {
+      const idSet = new Set(ids);
+      if (idSet.size === 0) return;
+
+      get().pushHistory();
+      set((s) => {
+        for (const n of s.nodes) {
+          if (!idSet.has(n.id)) continue;
+          n.data = { ...(n.data as any), ...(patch as any) };
+        }
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
+      });
+    },
+
+    mapNodesData(ids, mapper) {
+      const idSet = new Set(ids);
+      if (idSet.size === 0) return;
+
+      get().pushHistory();
+      set((s) => {
+        for (const n of s.nodes) {
+          if (!idSet.has(n.id)) continue;
+          n.data = mapper(n.data as any) as any;
+        }
+        s.isDirty = true;
+        (window as any).branchpro?.setDirty?.(true);
       });
     },
     resetHistory() {
