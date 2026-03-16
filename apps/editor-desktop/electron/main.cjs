@@ -362,6 +362,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    show: false,
     backgroundColor: "#0b0b0b",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -380,6 +381,11 @@ function createWindow() {
   }
 
   windows.push(win);
+  win.once("ready-to-show", () => {
+    win.maximize(); // full-size window, but still windowed mode
+    win.show();
+  });
+
   win.on("closed", () => {
     windows = windows.filter((w) => w !== win);
   });
@@ -744,6 +750,12 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
 
   const zip = new JSZip();
 
+  const optimizeLevel = payload?.optimizeLevel === "max" ? "max" : "balanced";
+  const imgQuality = optimizeLevel === "max" ? 65 : 80;
+  const videoOpts = optimizeLevel === "max"
+    ? { crf: 32, preset: "slow", maxWidth: 960 }
+    : { crf: 28, preset: "medium", maxWidth: 1280 };
+
     // ✅ мапа переименований: старый media path -> новый media path
   const renameMap = new Map();
 
@@ -758,7 +770,7 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
   // картинки → webp
     if (["png", "jpg", "jpeg", "webp"].includes(ext)) {
       try {
-        const outBuf = await optimizeImageToWebp(buf, 80);
+        const outBuf = await optimizeImageToWebp(buf, imgQuality);
         const newName = replaceExt(name, "webp");
 
         renameMap.set(name, newName);
@@ -774,7 +786,7 @@ ipcMain.handle("project:saveBundle", async (_e, payload) => {
   // видео → mp4
     if (["mp4", "mov", "webm"].includes(ext)) {
       try {
-        const outBuf = await optimizeVideoToMp4(buf, { crf: 28, preset: "medium", maxWidth: 1280 });
+        const outBuf = await optimizeVideoToMp4(buf, videoOpts);
         const newName = replaceExt(name, "mp4");
 
         renameMap.set(name, newName);
