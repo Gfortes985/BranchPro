@@ -34,6 +34,16 @@ const nodeTypes: NodeTypes = {
   endingNode: NodeEnding
 };
 
+type LocalVersionSnapshot = {
+  id: string;
+  createdAt: number;
+  title: string;
+  nodes: Node<any>[];
+  edges: Edge[];
+};
+
+const VERSIONS_KEY = "branchpro:editor:snapshots:v1";
+
 export default function App() {
   const isDirty = useEditorStore((s) => s.isDirty);
   const lastSavedAt = useEditorStore((s) => s.lastSavedAt);
@@ -234,6 +244,54 @@ export default function App() {
   const [validationOpen, setValidationOpen] = useState(false);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+
+  const loadSnapshots = useCallback((): LocalVersionSnapshot[] => {
+    try {
+      const raw = localStorage.getItem(VERSIONS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as LocalVersionSnapshot[];
+      if (!Array.isArray(parsed)) return [];
+      return parsed;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const saveSnapshot = useCallback(() => {
+    const title = window.prompt("Название снимка версии", `Снимок ${new Date().toLocaleString()}`)?.trim();
+    if (!title) return;
+
+    const existing = loadSnapshots();
+    const next: LocalVersionSnapshot[] = [
+      {
+        id: nanoid(),
+        createdAt: Date.now(),
+        title,
+        nodes: structuredClone(nodes as any),
+        edges: structuredClone(edges)
+      },
+      ...existing
+    ].slice(0, 30);
+
+    localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setVersionsOpen(true);
+  }, [loadSnapshots, nodes, edges]);
+
+  const restoreSnapshot = useCallback((snapshot: LocalVersionSnapshot) => {
+    replaceAll(snapshot.nodes as any, snapshot.edges);
+    markDirty();
+    setVersionsOpen(false);
+    window.setTimeout(() => {
+      rfRef.current?.fitView?.({ padding: 0.22, duration: 350 });
+    }, 0);
+  }, [replaceAll, markDirty]);
+
+  const deleteSnapshot = useCallback((id: string) => {
+    const next = loadSnapshots().filter((v) => v.id !== id);
+    localStorage.setItem(VERSIONS_KEY, JSON.stringify(next));
+    setVersionsOpen(true);
+  }, [loadSnapshots]);
 
   const runAutoLayout = useCallback(() => {
     if (nodes.length === 0) return;
@@ -609,7 +667,13 @@ const isValidConnection = useCallback(
     <LicenseGate>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: "100vh", overflow: "hidden" }}>
         <div style={{ background: "#0b0b0b", overflow: "visible" }}>
-          <TopBar onValidate={runValidation} onPreview={() => setPreviewOpen(true)} onAutoLayout={runAutoLayout} />
+          <TopBar
+            onValidate={runValidation}
+            onPreview={() => setPreviewOpen(true)}
+            onAutoLayout={runAutoLayout}
+            onSaveSnapshot={saveSnapshot}
+            onOpenVersions={() => setVersionsOpen(true)}
+          />
 
           <div
             ref={wrapperRef}
@@ -680,6 +744,13 @@ const isValidConnection = useCallback(
           <ConfirmDelete open={confirmOpen} count={confirmCount} onConfirm={confirmDelete} onCancel={cancelDelete} />
           <ValidationReport open={validationOpen} issues={validationIssues} onClose={() => setValidationOpen(false)} />
           <PreviewPlayMode open={previewOpen} nodes={nodes as any} edges={edges} onClose={() => setPreviewOpen(false)} />
+          <VersionsDialog
+            open={versionsOpen}
+            snapshots={loadSnapshots()}
+            onClose={() => setVersionsOpen(false)}
+            onRestore={restoreSnapshot}
+            onDelete={deleteSnapshot}
+          />
         </div>
 
         <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
@@ -691,7 +762,13 @@ const isValidConnection = useCallback(
 
 }
 
-function TopBar(props: { onValidate: () => void; onPreview: () => void; onAutoLayout: () => void }) {
+function TopBar(props: {
+  onValidate: () => void;
+  onPreview: () => void;
+  onAutoLayout: () => void;
+  onSaveSnapshot: () => void;
+  onOpenVersions: () => void;
+}) {
   const addQuestion = useEditorStore((s) => s.addQuestion);
   const addEnding = useEditorStore((s) => (s as any).addEnding);
   const requestDelete = useEditorStore((s) => s.requestDelete);
@@ -733,6 +810,8 @@ function TopBar(props: { onValidate: () => void; onPreview: () => void; onAutoLa
       <button style={tbBtn} onClick={props.onValidate}>🧪 Проверить проект</button>
       <button style={tbBtn} onClick={props.onPreview}>▶️ Превью</button>
       <button style={tbBtn} onClick={props.onAutoLayout}>🧭 Авторасставить</button>
+      <button style={tbBtn} onClick={props.onSaveSnapshot}>📸 Снимок</button>
+      <button style={tbBtn} onClick={props.onOpenVersions}>🕘 Версии</button>
       
 
       <div style={{ width: 10 }} />
@@ -756,6 +835,46 @@ function TopBar(props: { onValidate: () => void; onPreview: () => void; onAutoLa
   );
 }
 
+function VersionsDialog(props: {
+  open: boolean;
+  snapshots: LocalVersionSnapshot[];
+  onClose: () => void;
+  onRestore: (snapshot: LocalVersionSnapshot) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (!props.open) return null;
+
+  return (
+    <div style={ovl} onClick={props.onClose}>
+      <div style={dlg} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>Локальные версии</div>
+          <button style={tbBtn} onClick={props.onClose}>Закрыть</button>
+        </div>
+
+        <div style={{ marginTop: 10, maxHeight: 420, overflow: "auto", display: "grid", gap: 8 }}>
+          {props.snapshots.length === 0 ? (
+            <div style={{ opacity: 0.7, fontSize: 13 }}>Снимков пока нет. Нажми «📸 Снимок» в topbar.</div>
+          ) : (
+            props.snapshots.map((s) => (
+              <div key={s.id} style={{ border: "1px solid #2a2a2a", borderRadius: 10, padding: 10, background: "#121212" }}>
+                <div style={{ fontWeight: 700 }}>{s.title}</div>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
+                  {new Date(s.createdAt).toLocaleString()} · Нод: {s.nodes.length} · Связей: {s.edges.length}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                  <button style={tbBtn} onClick={() => props.onRestore(s)}>Восстановить</button>
+                  <button style={btnDangerSmall} onClick={() => props.onDelete(s.id)}>Удалить</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const tbBtn: React.CSSProperties = {
   padding: "8px 10px",
   borderRadius: 12,
@@ -763,6 +882,36 @@ const tbBtn: React.CSSProperties = {
   background: "#151515",
   color: "#fff",
   cursor: "pointer"
+};
+
+const btnDangerSmall: React.CSSProperties = {
+  padding: "8px 10px",
+  borderRadius: 10,
+  border: "1px solid #3a1b1b",
+  background: "#2a0f0f",
+  color: "#fff",
+  cursor: "pointer",
+  fontSize: 12
+};
+
+const ovl: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.5)",
+  display: "grid",
+  placeItems: "center",
+  zIndex: 1000
+};
+
+const dlg: React.CSSProperties = {
+  width: "min(760px, calc(100vw - 32px))",
+  maxHeight: "min(560px, calc(100vh - 32px))",
+  overflow: "hidden",
+  background: "#0f0f0f",
+  color: "#fff",
+  border: "1px solid #2a2a2a",
+  borderRadius: 12,
+  padding: 12
 };
 
 /* ---------------- MiniMap Overlay ---------------- */
