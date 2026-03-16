@@ -18,6 +18,7 @@ import Inspector from "./editor/inspector/Inspector";
 import ConfirmDelete from "./editor/dialogs/ConfirmDelete";
 import ValidationReport from "./editor/dialogs/ValidationReport";
 import PreviewPlayMode from "./editor/dialogs/PreviewPlayMode";
+import NodeSearchDialog from "./editor/dialogs/NodeSearchDialog";
 import { useEditorStore } from "./editor/store/editorStore";
 import { collectBundle, fromProject } from "./editor/file/projectIO";
 import { validateProject, type ValidationIssue } from "./editor/validation/validateProject";
@@ -247,6 +248,7 @@ export default function App() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<LocalVersionSnapshot[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const loadSnapshots = useCallback((): LocalVersionSnapshot[] => {
     try {
@@ -296,6 +298,17 @@ export default function App() {
     setSnapshots(next);
     setVersionsOpen(true);
   }, [loadSnapshots]);
+
+  const focusNode = useCallback((nodeId: string) => {
+    const target = nodes.find((n) => n.id === nodeId);
+    if (!target) return;
+
+    setSelection([nodeId], []);
+    setNodes(nodes.map((n) => ({ ...n, selected: n.id === nodeId })));
+
+    const p = target.position ?? { x: 0, y: 0 };
+    rfRef.current?.setCenter?.(p.x + 150, p.y + 70, { zoom: 1.1, duration: 300 });
+  }, [nodes, setNodes, setSelection]);
 
   useEffect(() => {
     if (!versionsOpen) return;
@@ -516,6 +529,10 @@ const isValidConnection = useCallback(
         e.preventDefault();
         pasteSelection();
         return;
+      } else if (ctrl && code === "KeyF") {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
       }
     };
 
@@ -688,6 +705,10 @@ const isValidConnection = useCallback(
             toolsOpen={toolsOpen}
             onToggleTools={() => setToolsOpen((v) => !v)}
             onCloseTools={() => setToolsOpen(false)}
+            onOpenSearch={() => {
+              setSearchOpen(true);
+              setToolsOpen(false);
+            }}
           />
 
           <div
@@ -767,6 +788,12 @@ const isValidConnection = useCallback(
             onDelete={deleteSnapshot}
             onCreateSnapshot={saveSnapshot}
           />
+          <NodeSearchDialog
+            open={searchOpen}
+            nodes={nodes as any}
+            onClose={() => setSearchOpen(false)}
+            onFocusNode={focusNode}
+          />
         </div>
 
         <div style={{ borderLeft: "1px solid #1f1f1f", background: "#0f0f0f", overflow: "auto" }}>
@@ -783,6 +810,7 @@ function TopBar(props: {
   onPreview: () => void;
   onAutoLayout: () => void;
   onOpenVersions: () => void;
+  onOpenSearch: () => void;
   toolsOpen: boolean;
   onToggleTools: () => void;
   onCloseTools: () => void;
@@ -832,6 +860,7 @@ function TopBar(props: {
             <button style={toolsBtn} onClick={() => { props.onValidate(); props.onCloseTools(); }}>🧪 Проверить проект</button>
             <button style={toolsBtn} onClick={() => { props.onPreview(); props.onCloseTools(); }}>▶️ Превью</button>
             <button style={toolsBtn} onClick={() => { props.onAutoLayout(); props.onCloseTools(); }}>🧭 Авторасставить</button>
+            <button style={toolsBtn} onClick={props.onOpenSearch}>🔎 Поиск нод (Ctrl+F)</button>
             <button style={toolsBtn} onClick={props.onOpenVersions}>🕘 Версии / снимки</button>
           </div>
         ) : null}
