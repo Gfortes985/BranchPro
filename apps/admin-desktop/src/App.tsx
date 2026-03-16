@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
 import { NetworksPage } from "./pages/NetworksPage";
@@ -16,7 +16,8 @@ type DeviceRow = {
   lastSeenAgeSec: number;
 };
 
-const FIXED_SERVER_URL = "http://localhost:3000";
+const FIXED_SERVER_HOST = "81.30.105.141";
+const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -24,7 +25,8 @@ export default function App() {
   const [authToken, setAuthToken] = useState(localStorage.getItem("bp_auth_token") ?? "");
   const [authEmail, setAuthEmail] = useState(localStorage.getItem("bp_auth_email") ?? "");
   const [authPassword, setAuthPassword] = useState("");
-  const baseUrl = FIXED_SERVER_URL;
+  const [baseUrl, setBaseUrl] = useState<string>(BASE_URL_CANDIDATES[0]);
+  const [apiPrefix, setApiPrefix] = useState<"/v1" | "/api/v1">("/v1");
 
   const api = useMemo(
     () =>
@@ -86,21 +88,50 @@ export default function App() {
     setBusy(true);
     setToast("");
     try {
-      const r = await api.get("/v1/health");
-      setServerOk(!!r.data?.ok || r.status === 200);
-    } catch (e: any) {
-      setServerOk(false);
-      setToast("❌ Сервер недоступен: " + (e?.message ?? String(e)));
+      let found = false;
+
+      for (const candidateBase of BASE_URL_CANDIDATES) {
+        for (const candidatePrefix of ["/v1", "/api/v1"] as const) {
+          try {
+            const r = await axios.get(`${candidateBase}${candidatePrefix}/health`, {
+              timeout: 7000,
+              validateStatus: () => true,
+            });
+            if (r.status >= 200 && r.status < 300) {
+              setBaseUrl(candidateBase);
+              setApiPrefix(candidatePrefix);
+              setServerOk(true);
+              setToast(`✅ Сервер доступен: ${candidateBase}${candidatePrefix}`);
+              found = true;
+              break;
+            }
+          } catch {
+            // пробуем следующий вариант
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        setServerOk(false);
+        setToast("❌ Сервер недоступен. Проверь HTTPS/HTTP, CORS и прокси до API.");
+      }
     } finally {
       setBusy(false);
     }
   };
 
+
+  useEffect(() => {
+    checkServer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadDevices = async () => {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.get<DeviceRow[]>("/v1/devices");
+      const { data } = await api.get<DeviceRow[]>(`${apiPrefix}/devices`);
       setDevices(data);
     } catch (e: any) {
       setToast("Ошибка загрузки устройств: " + (e?.message ?? String(e)));
@@ -113,7 +144,7 @@ export default function App() {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.post("/v1/pairing/start");
+      const { data } = await api.post(`${apiPrefix}/pairing/start`);
       setPairCode(data.code);
       setPairExpires(data.expiresInSec);
       setToast("Код создан ✅");
@@ -131,7 +162,7 @@ export default function App() {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.post("/v1/deploy", {
+      const { data } = await api.post(`${apiPrefix}/deploy`, {
         deviceId,
         versionId,
         baseUrl: api.defaults.baseURL, // позже уберём, сделаем PUBLIC_BASE_URL на сервере
@@ -173,7 +204,7 @@ export default function App() {
             {serverOk === null ? "server: ?" : serverOk ? "server: ok" : "server: down"}
           </div>
           <div className="muted mono" title={baseUrl}>
-            {baseUrl || "no server"}
+            {`${baseUrl}${apiPrefix}` || "no server"}
           </div>
         </div>
       </aside>
@@ -229,7 +260,7 @@ export default function App() {
           {page === "settings" ? (
             <Card title="Сервер">
               <div className="label">Server URL (фиксирован в приложении)</div>
-              <div className="muted mono" style={{ marginTop: 6 }}>{baseUrl}</div>
+              <div className="muted mono" style={{ marginTop: 6 }}>{`${baseUrl}${apiPrefix}`}</div>
 
               <div style={{ marginTop: 12 }}>
                 <button className="btn ghost" onClick={checkServer} disabled={busy}>
@@ -238,7 +269,7 @@ export default function App() {
               </div>
 
               <div style={{ marginTop: 12 }} className="muted">
-                URL зашит в код и не требует ручного ввода.
+                Хост зашит в код. Приложение само подбирает HTTPS/HTTP и префикс API.
               </div>
 
               <div style={{ height: 16 }} />
@@ -275,7 +306,7 @@ export default function App() {
                   placeholder="password"
                   style={{ minWidth: 200 }}
                 />
-                <button className="btn" onClick={loginAndSaveToken} disabled={busy || !authEmail || !authPassword || !baseUrl}>
+                <button className="btn" onClick={loginAndSaveToken} disabled={busy || !authEmail || !authPassword}>
                   Войти и сохранить токен
                 </button>
               </div>
@@ -287,7 +318,7 @@ export default function App() {
           ) : null}
 
           {page === "networks" ? (
-            <NetworksPage baseUrl={baseUrl} serverOk={!!serverOk} authToken={authToken} />
+            <NetworksPage baseUrl={baseUrl} apiPrefix={apiPrefix} serverOk={!!serverOk} authToken={authToken} />
           ) : null}
 
 

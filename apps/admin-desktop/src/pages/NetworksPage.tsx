@@ -97,7 +97,7 @@ function defaultPos(i: number, n: number) {
   };
 }
 
-export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authToken?: string }) {
+export function NetworksPage(props: { baseUrl: string; apiPrefix: "/v1" | "/api/v1"; serverOk: boolean; authToken?: string }) {
   const api = useMemo(
     () =>
       axios.create({
@@ -139,7 +139,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authTo
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.get<Network[]>("/v1/networks");
+      const { data } = await api.get<Network[]>(`${props.apiPrefix}/networks`);
       setNets(data);
       // не авто-выбираем сеть: пользователь сам откроет
     } catch (e: any) {
@@ -156,7 +156,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authTo
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.post("/v1/networks", { name });
+      const { data } = await api.post(`${props.apiPrefix}/networks`, { name });
       setNewName("");
       await load();
       // создаём сеть, но НЕ переходим автоматически
@@ -191,7 +191,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authTo
     setBusy(true);
     setMsg("");
     try {
-      const { data } = await api.post(`/v1/networks/${selectedId}/pairing/start`);
+      const { data } = await api.post(`${props.apiPrefix}/networks/${selectedId}/pairing/start`);
 
       const code = data.code as string;
       const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60); // ✅ если сервер не прислал — 60 сек
@@ -356,7 +356,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authTo
     });
 
     try {
-      await api.patch(`/v1/networks/${selectedId}/layout`, { nodes: payload });
+      await api.patch(`${props.apiPrefix}/networks/${selectedId}/layout`, { nodes: payload });
     } catch {
       // тихо
     }
@@ -381,7 +381,7 @@ export function NetworksPage(props: { baseUrl: string; serverOk: boolean; authTo
       refreshing = true;
       // не блокируем UI общим busy — можно обновлять тихо
       api
-        .post(`/v1/networks/${selectedId}/pairing/start`)
+        .post(`${props.apiPrefix}/networks/${selectedId}/pairing/start`)
         .then(({ data }) => {
           const code = data.code as string;
           const expiresInSec = Number(data.expiresInSec ?? data.expiresIn ?? 60);
