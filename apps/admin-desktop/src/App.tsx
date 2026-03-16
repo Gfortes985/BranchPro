@@ -28,6 +28,15 @@ type ProjectRow = {
   versions: ProjectVersion[];
 };
 
+type DashboardStats = {
+  totalDevices: number;
+  onlineDevices: number;
+  offlineDevices: number;
+  networks: number;
+  projects: number;
+  versions: number;
+};
+
 const FIXED_SERVER_HOST = "81.30.105.141";
 const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
@@ -64,6 +73,7 @@ export default function App() {
   const [pairExpires, setPairExpires] = useState<number | null>(null);
   const [deployVersionId, setDeployVersionId] = useState(localStorage.getItem("bp_deploy_version_id") ?? "");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
 
   const saveToken = () => {
     const token = authToken.trim();
@@ -105,6 +115,109 @@ export default function App() {
       setToast("✅ Вход выполнен, токен сохранён");
     } catch (e: any) {
       setToast("❌ Ошибка входа: " + (e?.response?.data?.error ?? e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  async function checkServer() {
+    setBusy(true);
+    setToast("");
+    try {
+      let found = false;
+
+      for (const candidateBase of BASE_URL_CANDIDATES) {
+        for (const candidatePrefix of ["/v1", "/api/v1"] as const) {
+          try {
+            const r = await axios.get(`${candidateBase}${candidatePrefix}/health`, {
+              timeout: 7000,
+              validateStatus: () => true,
+            });
+            if (r.status >= 200 && r.status < 300) {
+              setBaseUrl(candidateBase);
+              setApiPrefix(candidatePrefix);
+              setServerOk(true);
+              setToast(`✅ Сервер доступен: ${candidateBase}${candidatePrefix}`);
+              found = true;
+              break;
+            }
+          } catch {
+            // пробуем следующий вариант
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        setServerOk(false);
+        setToast("❌ Сервер недоступен. Проверь HTTPS/HTTP, CORS и прокси до API.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
+  useEffect(() => {
+    checkServer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        if (err?.response?.status === 401) {
+          handleUnauthorized();
+        }
+        return Promise.reject(err);
+      }
+    );
+
+    return () => api.interceptors.response.eject(id);
+  }, [api]);
+
+  const loadDashboardStats = async () => {
+    if (!serverOk) {
+      setToast("Сначала проверь доступность сервера в Settings");
+      return;
+    }
+
+    setBusy(true);
+    setToast("");
+    try {
+      const [devicesRes, networksRes, projectsRes] = await Promise.allSettled([
+        api.get<DeviceRow[]>(`${apiPrefix}/devices`),
+        api.get(`${apiPrefix}/networks`),
+        api.get(`${apiPrefix}/projects`),
+      ]);
+
+      const devices = devicesRes.status === "fulfilled" && Array.isArray(devicesRes.value.data)
+        ? devicesRes.value.data
+        : [];
+      const networks = networksRes.status === "fulfilled" && Array.isArray(networksRes.value.data)
+        ? networksRes.value.data
+        : [];
+      const projectRows = projectsRes.status === "fulfilled"
+        ? normalizeProjects(projectsRes.value.data)
+        : [];
+
+      const onlineDevices = devices.filter((d) => d.online).length;
+      const versions = projectRows.reduce((acc, p) => acc + p.versions.length, 0);
+
+      setStats({
+        totalDevices: devices.length,
+        onlineDevices,
+        offlineDevices: Math.max(0, devices.length - onlineDevices),
+        networks: networks.length,
+        projects: projectRows.length,
+        versions,
+      });
+
+      setToast("Dashboard обновлён ✅");
+    } catch (e: any) {
+      setToast("Ошибка загрузки Dashboard: " + (e?.message ?? String(e)));
     } finally {
       setBusy(false);
     }
@@ -326,13 +439,32 @@ export default function App() {
         <div className="content">
 
           {page === "dashboard" ? (
-            <Card title="Добро пожаловать">
-              <div className="muted">
-                Здесь будет обзор: активные сети, онлайн устройства, последние деплои и ошибки.
+            <Card title="Dashboard">
+              <div className="row">
+                <button className="btn ghost" onClick={loadDashboardStats} disabled={busy || !serverOk}>
+                  ⟳ Обновить метрики
+                </button>
+                <div className="muted">Сводка по устройствам, сетям и проектам.</div>
               </div>
-              <div style={{ marginTop: 12 }} className="muted">
-                Начни с <b>Settings</b>: проверь соединение и выполни вход.
-              </div>
+
+              {stats ? (
+                <div className="table" style={{ marginTop: 12 }}>
+                  <div className="tr th" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                    <div>Метрика</div>
+                    <div>Значение</div>
+                  </div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Устройства (всего)</div><div><b>{stats.totalDevices}</b></div></div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Устройства online</div><div><b>{stats.onlineDevices}</b></div></div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Устройства offline</div><div><b>{stats.offlineDevices}</b></div></div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Сети</div><div><b>{stats.networks}</b></div></div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Проекты</div><div><b>{stats.projects}</b></div></div>
+                  <div className="tr" style={{ gridTemplateColumns: "1fr 1fr" }}><div>Версии проектов</div><div><b>{stats.versions}</b></div></div>
+                </div>
+              ) : (
+                <div style={{ marginTop: 12 }} className="muted">
+                  Нажми “Обновить метрики”, чтобы загрузить данные с сервера.
+                </div>
+              )}
             </Card>
           ) : null}
 
