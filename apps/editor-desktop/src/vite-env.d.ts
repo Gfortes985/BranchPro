@@ -5,6 +5,7 @@ declare global {
     branchpro: {
       pickMedia: () => Promise<string | null>;
       mediaUrl: (absPath: string) => string;
+      getPathForFile?: (file: File) => string | null;
     };
   }
 }
