@@ -19,7 +19,6 @@ type DeviceRow = {
 const FIXED_SERVER_HOST = "81.30.105.141";
 const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
-
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
 
@@ -50,6 +49,7 @@ export default function App() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [pairExpires, setPairExpires] = useState<number | null>(null);
+  const [deployVersionId, setDeployVersionId] = useState(localStorage.getItem("bp_deploy_version_id") ?? "");
 
   const saveToken = () => {
     const token = authToken.trim();
@@ -85,7 +85,8 @@ export default function App() {
     }
   };
 
-  const checkServer = async () => {
+  const loginAndSaveToken = async () => {
+    if (!baseUrl) return;
     setBusy(true);
     setToast("");
     try {
@@ -157,8 +158,11 @@ export default function App() {
   };
 
   const deploy = async (deviceId: string) => {
-    const versionId = prompt("versionId проекта (ProjectVersion.id)?");
-    if (!versionId) return;
+    const versionId = deployVersionId.trim();
+    if (!versionId) {
+      setToast("Укажи versionId перед deploy");
+      return;
+    }
 
     setBusy(true);
     setToast("");
@@ -166,9 +170,9 @@ export default function App() {
       const { data } = await api.post(`${apiPrefix}/deploy`, {
         deviceId,
         versionId,
-        baseUrl: api.defaults.baseURL, // позже уберём, сделаем PUBLIC_BASE_URL на сервере
+        baseUrl: api.defaults.baseURL,
       });
-      setToast(data.ok ? "DEPLOY отправлен ✅" : "Устройство оффлайн ❌");
+      setToast(data.ok ? `DEPLOY отправлен ✅ (versionId: ${versionId})` : "Устройство оффлайн ❌");
     } catch (e: any) {
       setToast("Ошибка deploy: " + (e?.message ?? String(e)));
     } finally {
@@ -325,6 +329,20 @@ export default function App() {
 
           {page === "devices" ? (
             <Card title="Устройства">
+              <div className="label">Project versionId для deploy</div>
+              <div className="row" style={{ marginBottom: 10 }}>
+                <input
+                  className="inp"
+                  value={deployVersionId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDeployVersionId(v);
+                    localStorage.setItem("bp_deploy_version_id", v);
+                  }}
+                  placeholder="Например: 42"
+                />
+              </div>
+
               <div className="row">
                 <button className="btn ghost" onClick={loadDevices} disabled={busy || !serverOk}>
                   ⟳ Обновить
@@ -367,7 +385,7 @@ export default function App() {
                       </span>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <button className="btn" disabled={busy || !d.online} onClick={() => deploy(d.id)}>
+                      <button className="btn" disabled={busy || !d.online || !deployVersionId.trim()} onClick={() => deploy(d.id)}>
                         Deploy
                       </button>
                     </div>
@@ -381,7 +399,7 @@ export default function App() {
 
           {page === "projects" ? (
             <Card title="Проекты">
-              <div className="muted">Следующий шаг: upload zip → список версий → deploy в сеть/устройства.</div>
+              <div className="muted">Deploy по устройствам уже работает через поле versionId на странице Devices.</div>
             </Card>
           ) : null}
 
