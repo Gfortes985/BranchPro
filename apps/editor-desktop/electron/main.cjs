@@ -362,6 +362,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    show: false,
     backgroundColor: "#0b0b0b",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -380,6 +381,11 @@ function createWindow() {
   }
 
   windows.push(win);
+  win.once("ready-to-show", () => {
+    win.maximize(); // full-size window, but still windowed mode
+    win.show();
+  });
+
   win.on("closed", () => {
     windows = windows.filter((w) => w !== win);
   });
