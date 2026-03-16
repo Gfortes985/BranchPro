@@ -143,6 +143,9 @@ function MediaDropZone(props: {
   const [hint, setHint] = useState<string>("");
 
   const extractFilePath = (file: File): string | null => {
+    const bridgePath = window.branchpro.getPathForFile?.(file);
+    if (typeof bridgePath === "string" && bridgePath.length > 0) return bridgePath;
+
     const anyFile = file as any;
     if (typeof anyFile.path === "string" && anyFile.path.length > 0) return anyFile.path;
     if (typeof anyFile.webkitRelativePath === "string" && anyFile.webkitRelativePath.length > 0) return anyFile.webkitRelativePath;
