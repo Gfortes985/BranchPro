@@ -72,6 +72,10 @@ const normalizeDeviceRow = (raw: any): DeviceRow => {
     parseSeconds(raw?.last_seen_age_sec),
     parseSeconds(raw?.lastSeenSec),
     parseSeconds(raw?.heartbeatAgeSec),
+    (() => {
+      const ageMs = parseSeconds(raw?.lastSeenAgeMs ?? raw?.heartbeatAgeMs);
+      return ageMs === null ? null : ageMs / 1000;
+    })(),
   ];
 
   const timestampCandidates = [
@@ -93,7 +97,7 @@ const normalizeDeviceRow = (raw: any): DeviceRow => {
     })();
 
   const statusRaw = String(raw?.status ?? "").toLowerCase();
-  const explicitOnline =
+  const explicitOnlineTrue =
     typeof raw?.online === "boolean"
       ? raw.online
       : typeof raw?.isOnline === "boolean"
@@ -102,7 +106,7 @@ const normalizeDeviceRow = (raw: any): DeviceRow => {
       ? ["online", "connected", "active", "alive"].includes(statusRaw)
       : null;
 
-  const online = explicitOnline ?? computedLastSeenAgeSec <= ONLINE_LAST_SEEN_THRESHOLD_SEC;
+  const online = explicitOnlineTrue === true || computedLastSeenAgeSec <= ONLINE_LAST_SEEN_THRESHOLD_SEC;
 
   return {
     id: String(raw?.id ?? raw?.deviceId ?? ""),
