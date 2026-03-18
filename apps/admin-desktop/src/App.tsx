@@ -344,6 +344,63 @@ export default function App() {
     }
   };
 
+  async function checkServer() {
+    setBusy(true);
+    setToast("");
+    try {
+      let found = false;
+
+      for (const candidateBase of BASE_URL_CANDIDATES) {
+        for (const candidatePrefix of ["/v1", "/api/v1"] as const) {
+          try {
+            const r = await axios.get(`${candidateBase}${candidatePrefix}/health`, {
+              timeout: 7000,
+              validateStatus: () => true,
+            });
+            if (r.status >= 200 && r.status < 300) {
+              setBaseUrl(candidateBase);
+              setApiPrefix(candidatePrefix);
+              setServerOk(true);
+              setToast(`✅ Сервер доступен: ${candidateBase}${candidatePrefix}`);
+              found = true;
+              break;
+            }
+          } catch {
+            // пробуем следующий вариант
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        setServerOk(false);
+        setToast("❌ Сервер недоступен. Проверь HTTPS/HTTP, CORS и прокси до API.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
+  useEffect(() => {
+    checkServer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        if (err?.response?.status === 401) {
+          handleUnauthorized();
+        }
+        return Promise.reject(err);
+      }
+    );
+    return () => api.interceptors.response.eject(id);
+  }, [api]);
+
   const loadDevices = async () => {
     setBusy(true);
     setToast("");
