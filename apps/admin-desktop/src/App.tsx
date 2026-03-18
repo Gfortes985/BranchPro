@@ -37,6 +37,84 @@ type DashboardStats = {
   versions: number;
 };
 
+const ONLINE_LAST_SEEN_THRESHOLD_SEC = 120;
+
+const parseSeconds = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const parseTimestampMs = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value > 1e12 ? value : value * 1000;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return asNumber > 1e12 ? asNumber : asNumber * 1000;
+    }
+
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  return null;
+};
+
+const normalizeDeviceRow = (raw: any): DeviceRow => {
+  const lastSeenAgeSecCandidates = [
+    parseSeconds(raw?.lastSeenAgeSec),
+    parseSeconds(raw?.last_seen_age_sec),
+    parseSeconds(raw?.lastSeenSec),
+    parseSeconds(raw?.heartbeatAgeSec),
+  ];
+
+  const timestampCandidates = [
+    parseTimestampMs(raw?.lastSeenAt),
+    parseTimestampMs(raw?.last_seen_at),
+    parseTimestampMs(raw?.lastSeen),
+    parseTimestampMs(raw?.heartbeatAt),
+    parseTimestampMs(raw?.updatedAt),
+    parseTimestampMs(raw?.updated_at),
+  ];
+
+  const nowMs = Date.now();
+  const computedLastSeenAgeSec =
+    lastSeenAgeSecCandidates.find((v) => v !== null) ??
+    (() => {
+      const ts = timestampCandidates.find((v) => v !== null);
+      if (!ts) return Number.POSITIVE_INFINITY;
+      return Math.max(0, Math.floor((nowMs - ts) / 1000));
+    })();
+
+  const statusRaw = String(raw?.status ?? "").toLowerCase();
+  const explicitOnline =
+    typeof raw?.online === "boolean"
+      ? raw.online
+      : typeof raw?.isOnline === "boolean"
+      ? raw.isOnline
+      : statusRaw
+      ? ["online", "connected", "active", "alive"].includes(statusRaw)
+      : null;
+
+  const online = explicitOnline ?? computedLastSeenAgeSec <= ONLINE_LAST_SEEN_THRESHOLD_SEC;
+
+  return {
+    id: String(raw?.id ?? raw?.deviceId ?? ""),
+    name: String(raw?.name ?? raw?.hostname ?? raw?.deviceName ?? "—"),
+    platform: String(raw?.platform ?? raw?.os ?? raw?.platformName ?? ""),
+    model: String(raw?.model ?? raw?.deviceModel ?? ""),
+    appVersion: String(raw?.appVersion ?? raw?.version ?? raw?.clientVersion ?? ""),
+    online,
+    lastSeenAgeSec: Number.isFinite(computedLastSeenAgeSec) ? computedLastSeenAgeSec : 999999,
+  };
+};
+
 const FIXED_SERVER_HOST = "81.30.105.141";
 const BASE_URL_CANDIDATES = [`https://${FIXED_SERVER_HOST}`, `http://${FIXED_SERVER_HOST}`] as const;
 
@@ -233,7 +311,7 @@ export default function App() {
       ]);
 
       const devices = devicesRes.status === "fulfilled" && Array.isArray(devicesRes.value.data)
-        ? devicesRes.value.data
+        ? devicesRes.value.data.map(normalizeDeviceRow)
         : [];
       const networks = networksRes.status === "fulfilled" && Array.isArray(networksRes.value.data)
         ? networksRes.value.data
@@ -323,8 +401,8 @@ export default function App() {
     setBusy(true);
     setToast("");
     try {
-      const { data } = await api.get<DeviceRow[]>(`${apiPrefix}/devices`);
-      setDevices(data);
+      const { data } = await api.get<any[]>(`${apiPrefix}/devices`);
+      setDevices(Array.isArray(data) ? data.map(normalizeDeviceRow) : []);
     } catch (e: any) {
       setToast("Ошибка загрузки устройств: " + (e?.message ?? String(e)));
     } finally {
